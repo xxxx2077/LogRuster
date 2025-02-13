@@ -4,6 +4,6 @@
 
 ## reference 
 
-[logapi](https://github.com/logpai/logparser)
+[logparser](https://github.com/logpai/logparser)
 
 数据集来自以上链接
