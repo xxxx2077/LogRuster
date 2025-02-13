@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+regex = "1"
+polars = "0.23"
+serde = { version = "1", features = ["derive"] }
+csv = "1.1"
+
