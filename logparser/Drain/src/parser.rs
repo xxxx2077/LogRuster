@@ -19,18 +19,6 @@ pub struct LogParser{
     preprocess_regex : Vec<FancyRegex>,
 }
 
-// 定义一个结构体来表示日志行
-#[derive(Serialize)]
-struct LogEntry {
-    line_id: usize,
-    date: String,
-    time: String,
-    pid: String,
-    level: String,
-    component: String,
-    content: String,
-}
-
 impl LogParser {
     // 构造函数
     pub fn new(indir: String, outdir: String, log_format: String, preprocess_regex : Vec<&'static str>) -> Self {
@@ -224,5 +212,4 @@ impl LogParser {
         }
         result
     }
-
 }
