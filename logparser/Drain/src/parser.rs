@@ -176,9 +176,7 @@ impl LogParser {
     // 加载数据（私有方法）
     fn load_data(&mut self) -> std::result::Result<(), Box<dyn Error>> {
         let (headers, log_format_regex) = self.generate_logformat_regex(&self.log_format);
-        let mut columns = headers;
-        columns.insert(0, "LineId".to_string());
 
-        self.log_to_dataframe(&log_format_regex, &columns)
+        self.log_to_dataframe(&log_format_regex, &headers)
     }
 }
