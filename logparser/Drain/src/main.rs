@@ -11,10 +11,17 @@ fn main() {
     
     let log_format = "<Date> <Time> <Pid> <Level> <Component>: <Content>";
 
+    let regex_patterns = vec![
+        r"blk_(|-)[0-9]+", // block id
+        r"(/|)([0-9]+\.){3}[0-9]+(:[0-9]+|)(:|)", // IP Address
+        r"(?<=[^A-Za-z0-9])(\-?\+?\d+)(?=[^A-Za-z0-9])|[0-9]+$", // Numbers
+    ];
+
     let mut log_parser = LogParser::new(
         indir.to_string(),
         outdir.to_string(),
         log_format.to_string(),
+        regex_patterns,
     );
 
     log_parser.parse(log_name.to_string());

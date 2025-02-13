@@ -1,3 +1,4 @@
+use fancy_regex::Regex as FancyRegex;
 use regex::Regex;
 use serde::Serialize;
 use std::error::Error;
@@ -15,6 +16,7 @@ pub struct LogParser{
     log_name : Option<String>,
     log_file_path : Option<PathBuf>,
     df_log: Option<DataFrame>, 
+    preprocess_regex : Vec<FancyRegex>,
 }
 
 // 定义一个结构体来表示日志行
@@ -31,11 +33,16 @@ struct LogEntry {
 
 impl LogParser {
     // 构造函数
-    pub fn new(indir: String, outdir: String, log_format: String) -> Self {
+    pub fn new(indir: String, outdir: String, log_format: String, preprocess_regex : Vec<&'static str>) -> Self {
+        // 编译所有正则表达式模式
+        let preprocess_regex: Vec<FancyRegex> = preprocess_regex.iter()
+            .map(|pattern| FancyRegex::new(pattern).expect("Failed to compile regex pattern"))
+            .collect();
         LogParser {
             indir,
             outdir,
             log_format,
+            preprocess_regex,
             log_name : None,
             log_file_path: None, // 初始化为 None
             df_log : None,
@@ -43,10 +50,37 @@ impl LogParser {
     }
 
     // 解析指定日志文件（公有方法）
-    pub fn parse(&mut self, log_name: String){
+    pub fn parse(&mut self, log_name: String)-> std::result::Result<(), Box<dyn Error>>{
         self.log_name = Some(log_name);
         self.log_file_path = Some(self.get_logfile_path());
-        self.load_data();
+        self.load_data()?;
+
+        let df = match &self.df_log{
+            Some(df) => df,
+            None => panic!("df_log is None"),
+        };
+
+        // 获取 "Content" 列的数据
+        let series_content = df.column("Content")?.utf8()?;
+        // 获取 "LineId" 列的数据（假设 LineId 是 u32 类型）
+        let series_lineid = df.column("LineId")?.utf8()?;
+        // 遍历每一行
+        for (line_id, content) in series_lineid.into_iter().zip(series_content.into_iter()) {
+            println!("line_id:{:?}, content:{:?}",line_id,content);
+            if let (Some(id), Some(content)) = (line_id, content) {
+                // 先将预处理结果存储在一个持久的变量中
+                let processed_content = self.preprocess(content);
+                // 然后对持久变量进行分割
+                let logmessageL: Vec<String> = processed_content.split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+                
+                println!("LogID: {}, LogMessage: {:?}", id, logmessageL);
+            }
+        }
+        
+        Ok(())
+
     }
 
     // 优化过的
@@ -135,7 +169,7 @@ impl LogParser {
             let line = line?;
             if let Some(caps) = regex.captures(&line.trim()) {
                 let mut entry = HashMap::new();
-                entry.insert("line_id".to_string(), (linecount + 1).to_string());
+                entry.insert("LineId".to_string(), (linecount + 1).to_string());
                 for header in headers.iter() {
                     let value = caps.name(header.trim_matches('<').trim_matches('>')).map_or("", |m| m.as_str()).to_string();
                     entry.insert(header.clone(), value);
@@ -158,7 +192,8 @@ impl LogParser {
         }
 
         for (key, values) in series_map {
-            columns.push(Series::new(key, values));
+            println!("key:{:?}",key);
+            columns.push(Series::new(key.trim_matches('<').trim_matches('>'), values));
         }
 
         let df = DataFrame::new(columns)?;
@@ -167,7 +202,6 @@ impl LogParser {
         self.df_log = Some(df);
 
         println!("{:?}", &self.df_log);
-
         println!("Total lines: {}", log_entries.len());
 
         Ok(())
@@ -179,4 +213,16 @@ impl LogParser {
 
         self.log_to_dataframe(&log_format_regex, &headers)
     }
+    
+    // preprocess 方法，用于处理输入行
+    fn preprocess(&self, line: &str) -> String {
+        let mut result = line.to_string();
+        for current_rex in &self.preprocess_regex {
+            // replace_all 返回 Cow<str>，可以直接转换为 String
+            let replacement = current_rex.replace_all(result.as_str(), "<*>").to_string();
+            result = replacement;
+        }
+        result
+    }
+
 }
