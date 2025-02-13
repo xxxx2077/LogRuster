@@ -4,39 +4,130 @@ use serde::Serialize;
 use std::error::Error;
 use std::fs::{self,File}; 
 use std::path::{Path,PathBuf};
-use std::collections::HashMap;
 use std::io::{BufReader, BufRead, Write};
 use csv::Writer;
 use polars::prelude::*;
+use std::collections::{HashSet,HashMap};
 
-pub struct LogParser{
-    indir : String,
-    outdir : String,
+// pub struct LogParser{
+//     indir : String,
+//     outdir : String,
+//     depth : u32,
+//     similarity_threshold : f64,
+//     max_child : u64,
+//     log_format : String,
+//     log_name : Option<String>,
+//     log_file_path : Option<PathBuf>,
+//     df_log: Option<DataFrame>, 
+//     preprocess_regex : Vec<FancyRegex>,
+// }
+
+#[derive(Debug)]
+struct LogCluster {
+    log_template: String,
+    log_id_l: HashSet<String>, // 使用HashSet来避免重复的日志ID
+}
+
+impl LogCluster {
+    fn new(log_template: String, log_id_l: Option<HashSet<String>>) -> Self {
+        LogCluster {
+            log_template,
+            log_id_l: log_id_l.unwrap_or_else(HashSet::new),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Node {
+    child_d: HashMap<String, Box<Node>>, // 使用Box<Node>来处理递归数据结构
+    depth: usize,
+    digit_or_token: Option<String>,
+}
+
+impl Node {
+    fn new(child_d: Option<HashMap<String, Box<Node>>>, depth: usize, digit_or_token: Option<String>) -> Self {
+        Node {
+            child_d: child_d.unwrap_or_else(HashMap::new),
+            depth,
+            digit_or_token,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct LogParser {
+    in_dir: PathBuf,       // 输入路径
+    out_dir : PathBuf,
+    depth: usize,        // 树的深度
+    st: f64,             // 相似度阈值
+    max_child: usize,    // 内部节点的最大子节点数
     log_format : String,
     log_name : Option<String>,
     log_file_path : Option<PathBuf>,
     df_log: Option<DataFrame>, 
-    preprocess_regex : Vec<FancyRegex>,
+    preprocess_regex : Vec<FancyRegex>,     // 正则表达式列表
+    keep_para: bool,     // 是否保留参数
 }
 
 impl LogParser {
-    // 构造函数
-    pub fn new(indir: String, outdir: String, log_format: String, preprocess_regex : Vec<&'static str>) -> Self {
-        // 编译所有正则表达式模式
+    pub fn new(
+        indir: Option<String>,
+        outdir: Option<String>,
+        depth: Option<usize>,
+        st: Option<f64>,
+        max_child: Option<usize>,
+        log_format : String,
+        preprocess_regex : Vec<&'static str>,
+        keep_para: Option<bool>,
+    ) -> Self {
+        let default_indir = "./".to_string();
+        let default_outdir = "./result/".to_string();
+        let default_depth = 4;
+        let default_st = 0.4;
+        let default_max_child = 100;
+        let default_keep_para = true;
+
         let preprocess_regex: Vec<FancyRegex> = preprocess_regex.iter()
-            .map(|pattern| FancyRegex::new(pattern).expect("Failed to compile regex pattern"))
-            .collect();
+        .map(|pattern| FancyRegex::new(pattern).expect("Failed to compile regex pattern"))
+        .collect();
+
         LogParser {
-            indir,
-            outdir,
+            in_dir: PathBuf::from(indir.unwrap_or(default_indir)),
+            out_dir : PathBuf::from(outdir.unwrap_or(default_outdir)), 
+            depth: depth.unwrap_or(default_depth).saturating_sub(2), // 确保不会出现负数
+            st: st.unwrap_or(default_st),
+            max_child: max_child.unwrap_or(default_max_child),
+            log_name: None,
+            log_file_path : None,
+            df_log: None,
             log_format,
             preprocess_regex,
-            log_name : None,
-            log_file_path: None, // 初始化为 None
-            df_log : None,
+            keep_para: keep_para.unwrap_or(default_keep_para),
         }
     }
+}
 
+
+// // 构造函数
+// pub fn new(indir: String, outdir: String, depth : u32, similarity_threshold:f64, max_child : u64,log_format: String, preprocess_regex : Vec<&'static str>) -> Self {
+//     // 编译所有正则表达式模式
+//     let preprocess_regex: Vec<FancyRegex> = preprocess_regex.iter()
+//         .map(|pattern| FancyRegex::new(pattern).expect("Failed to compile regex pattern"))
+//         .collect();
+//     LogParser {
+//         indir,
+//         outdir,
+//         depth,
+//         similarity_threshold,
+//         log_format,
+//         preprocess_regex,
+//         log_name : None,
+//         log_file_path: None, // 初始化为 None
+//         df_log : None,
+//     }
+// }
+
+impl LogParser {
     // 解析指定日志文件（公有方法）
     pub fn parse(&mut self, log_name: String)-> std::result::Result<(), Box<dyn Error>>{
         self.log_name = Some(log_name);
@@ -93,7 +184,7 @@ impl LogParser {
     fn get_logfile_path(&self) -> PathBuf{
         // 使用 PathBuf 来构建完整路径
         let log_name = self.get_logfile_name_with_suffix();
-        let mut logfile_path = PathBuf::from(&self.indir);
+        let mut logfile_path = PathBuf::from(&self.in_dir);
         logfile_path.push(log_name);
         logfile_path
     }
@@ -212,4 +303,41 @@ impl LogParser {
         }
         result
     }
+
+    // pub fn fast_match(&self){
+
+    // }
+
+    // pub fn tree_search(&self, rn: &Node, seq: Vec<String>) -> Option<LogCluster> {
+    //     let mut ret_log_clust = None;
+    //     let seq_len = seq.len();
+        
+    //     if !rn.child_d.contains_key(&seq_len.to_string()) {
+    //         return ret_log_clust;
+    //     }
+        
+    //     let mut parentn = rn.child_d.get(&seq_len.to_string()).unwrap();
+    //     let mut current_depth = 1;
+        
+    //     for token in seq.iter() {
+    //         if current_depth >= self.depth || current_depth > seq_len {
+    //             break;
+    //         }
+            
+    //         if let Some(next_node) = parentn.child_d.get(token) {
+    //             parentn = next_node;
+    //         } else if let Some(wildcard_node) = parentn.child_d.get("<*>") {
+    //             parentn = wildcard_node;
+    //         } else {
+    //             return ret_log_clust;
+    //         }
+    //         current_depth += 1;
+    //     }
+        
+    //     if let Some(log_clust_l) = parentn.child_d.get("logClustL") {
+    //         ret_log_clust = self.fast_match(log_clust_l, &seq);
+    //     }
+        
+    //     ret_log_clust
+    // }
 }

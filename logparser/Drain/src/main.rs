@@ -17,11 +17,19 @@ fn main() {
         r"(?<=[^A-Za-z0-9])(\-?\+?\d+)(?=[^A-Za-z0-9])|[0-9]+$", // Numbers
     ];
 
+    let st = 0.5;
+
+    let depth = 4;
+
     let mut log_parser = LogParser::new(
-        indir.to_string(),
-        outdir.to_string(),
+        Some(indir.to_string()),
+        Some(outdir.to_string()),
+        Some(depth),
+        Some(st),
+        None,
         log_format.to_string(),
         regex_patterns,
+        None,
     );
 
     log_parser.parse(log_name.to_string());
