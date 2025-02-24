@@ -22,34 +22,32 @@ use std::collections::{HashSet,HashMap};
 //     preprocess_regex : Vec<FancyRegex>,
 // }
 
-#[derive(Debug)]
-struct LogCluster {
-    log_template: String,
-    log_id_l: HashSet<String>, // 使用HashSet来避免重复的日志ID
+// * 日志组
+#[derive(Debug, Clone)]
+struct LogCluster{
+    log_id_lists : Option<Vec<String>>,
+    log_event_lists: Option<Vec<String>>,
 }
 
-impl LogCluster {
-    fn new(log_template: String, log_id_l: Option<HashSet<String>>) -> Self {
-        LogCluster {
-            log_template,
-            log_id_l: log_id_l.unwrap_or_else(HashSet::new),
-        }
-    }
+#[derive(Debug)]
+enum ChildOrLogCluster {
+    Children(HashMap<String, Box<Node>>),
+    LogClusters(Vec<LogCluster>),
 }
 
 #[derive(Debug)]
 struct Node {
-    child_d: HashMap<String, Box<Node>>, // 使用Box<Node>来处理递归数据结构
     depth: usize,
-    digit_or_token: Option<String>,
+    digit_or_token: String,
+    child_or_logcluster: ChildOrLogCluster,
 }
 
 impl Node {
-    fn new(child_d: Option<HashMap<String, Box<Node>>>, depth: usize, digit_or_token: Option<String>) -> Self {
+    fn new(depth: usize, digit_or_token: String, child:ChildOrLogCluster) -> Self {
         Node {
-            child_d: child_d.unwrap_or_else(HashMap::new),
             depth,
             digit_or_token,
+            child_or_logcluster: ChildOrLogCluster::Children(HashMap::new()),
         }
     }
 }
