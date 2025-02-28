@@ -168,12 +168,12 @@ impl LogParser {
                 // 先将预处理结果存储在一个持久的变量中
                 let processed_content = self.preprocess(content);
                 // 然后对持久变量进行分割
-                let logmessageL: Vec<String> = processed_content.split_whitespace()
+                let logmessage_list: Vec<String> = processed_content.split_whitespace()
                     .map(|s| s.to_string())
                     .collect();
                 
-                println!("LogID: {}, LogMessage: {:?}", id, logmessageL);
-                let new_logcluster = LogCluster::new(id.to_string(), logmessageL);
+                println!("LogID: {}, LogMessage: {:?}", id, logmessage_list);
+                let new_logcluster = LogCluster::new(id.to_string(), logmessage_list);
                 self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
             }
         }
