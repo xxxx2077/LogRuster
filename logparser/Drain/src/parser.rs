@@ -1,10 +1,12 @@
 use fancy_regex::Regex as FancyRegex;
 use regex::Regex;
 use serde::Serialize;
+use std::cell::RefCell;
 use std::error::Error;
 use std::fs::{self,File}; 
 use std::path::{Path,PathBuf};
 use std::io::{BufReader, BufRead, Write};
+use std::rc::Rc;
 use csv::Writer;
 use polars::prelude::*;
 use std::collections::{HashSet,HashMap};
@@ -23,15 +25,24 @@ use std::collections::{HashSet,HashMap};
 // }
 
 // * 日志组
-#[derive(Debug, Clone)]
+#[derive(Debug,Clone)]
 struct LogCluster{
-    log_id_lists : Option<Vec<String>>,
-    log_event_lists: Option<Vec<String>>,
+    log_id_lists : String,
+    log_event: Vec<String>,
+}
+
+impl LogCluster{
+    fn new(log_id_lists : String,log_event: Vec<String>) -> Self {
+        LogCluster{
+            log_id_lists,
+            log_event,
+        }
+    }
 }
 
 #[derive(Debug)]
 enum ChildOrLogCluster {
-    Children(HashMap<String, Box<Node>>),
+    Children(HashMap<String, Rc<RefCell<Node>>>),
     LogClusters(Vec<LogCluster>),
 }
 
@@ -39,11 +50,19 @@ enum ChildOrLogCluster {
 struct Node {
     depth: usize,
     digit_or_token: String,
-    child_or_logcluster: ChildOrLogCluster,
+    child_or_logcluster : ChildOrLogCluster,
 }
 
 impl Node {
-    fn new(depth: usize, digit_or_token: String, child:ChildOrLogCluster) -> Self {
+    fn new(depth: Option<usize>, digit_or_token: Option<String>) -> Self {
+        let depth = match depth{
+            Some(dep) => dep,
+            None => 0,
+        };
+        let digit_or_token = match digit_or_token{
+            Some(digit_or_token) => digit_or_token,
+            None => String::new(),
+        };
         Node {
             depth,
             digit_or_token,
@@ -132,6 +151,7 @@ impl LogParser {
         self.log_file_path = Some(self.get_logfile_path());
         self.load_data()?;
 
+        let mut root_node = Node::new(None,None);
         let df = match &self.df_log{
             Some(df) => df,
             None => panic!("df_log is None"),
@@ -153,8 +173,11 @@ impl LogParser {
                     .collect();
                 
                 println!("LogID: {}, LogMessage: {:?}", id, logmessageL);
+                let new_logcluster = LogCluster::new(id.to_string(), logmessageL);
+                self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
             }
         }
+        self.print_tree(&root_node, 1);
         
         Ok(())
 
@@ -302,40 +325,152 @@ impl LogParser {
         result
     }
 
-    // pub fn fast_match(&self){
+    fn has_numbers(&self, token: &str) -> bool {
+        token.chars().any(|c| c.is_digit(10))
+    }
 
-    // }
+    fn add_seq_to_prefix_tree(
+        &self,
+        root_node: &mut Node,
+        log_clust: &LogCluster,
+    ) {
+        let seq_len = log_clust.log_event.len();
+        let seq_len_str = seq_len.to_string();
+        let first_layer_node = match &mut root_node.child_or_logcluster {
+            ChildOrLogCluster::Children(children_map) => {
+                if children_map.contains_key(&seq_len_str) {
+                    // 如果存在，则获取并返回对应的节点
+                    Rc::clone(children_map.get(&seq_len_str).unwrap())
+                } else {
+                    // 如果不存在，则创建新节点并插入到 map 中
+                    let new_node = Rc::new(RefCell::new(Node::new(Some(1), Some(seq_len_str.clone()))));
+                    children_map.insert(seq_len_str.clone(), Rc::clone(&new_node));
+                    Rc::clone(&new_node)
+                }
+            },
+            _ => panic!("first_layer_node is logclust"),
+        };
 
-    // pub fn tree_search(&self, rn: &Node, seq: Vec<String>) -> Option<LogCluster> {
-    //     let mut ret_log_clust = None;
-    //     let seq_len = seq.len();
+        let mut parent_node = Rc::clone(&first_layer_node);
+
+        let mut currrent_depth = 1;
+
+        for token in &log_clust.log_event{
+            if currrent_depth >= self.depth || currrent_depth > seq_len{
+                let mut parent_node_borrow = parent_node.borrow_mut();
+                match &mut parent_node_borrow.child_or_logcluster{
+                    ChildOrLogCluster::LogClusters(log_clusts) =>{
+                        log_clusts.push(log_clust.clone());
+                    }
+                    ChildOrLogCluster::Children(_)=>{
+                        parent_node_borrow.child_or_logcluster = ChildOrLogCluster::LogClusters(vec![log_clust.clone()]);
+                    }
+                }
+
+                break;
+            }
+
+            let mut parent_borrow = parent_node.borrow_mut();
+            match &mut parent_borrow.child_or_logcluster {
+                ChildOrLogCluster::Children(children_map) => {
+                    if let Some(next_node) = children_map.get(token) {
+                        // 使用局部变量存储新节点引用
+                        let next_node_clone = Rc::clone(next_node);
+                        drop(parent_borrow); // 释放当前借用
+                        parent_node = next_node_clone;
+                    } 
+                    // token not in parent_node.children
+                    else {
+                        if !self.has_numbers(token){
+                            if let Some(next_node) = children_map.get("<*>") {
+                                if children_map.len() < self.max_child{
+                                    let new_node = Node::new(Some(currrent_depth + 1), Some(token.clone()));
+                                    let new_node = Rc::new(RefCell::new(new_node));
+                                    children_map.insert(token.clone(), Rc::clone(&new_node));
+                                    drop(parent_borrow);
+                                    parent_node = Rc::clone(&new_node);
+                                }else{
+                                    // 使用局部变量存储新节点引用
+                                    let next_node_clone = Rc::clone(next_node);
+                                    drop(parent_borrow); // 释放当前借用
+                                    parent_node = next_node_clone;
+                                }
+                            } 
+                            else{
+                                if children_map.len() + 1 < self.max_child{
+                                    let new_node = Node::new(Some(currrent_depth + 1),Some(token.clone()));
+                                    let new_node = Rc::new(RefCell::new(new_node));
+                                    children_map.insert(token.clone(), Rc::clone(&new_node));
+                                    drop(parent_borrow);
+                                    parent_node = Rc::clone(&new_node);
+                                }else if children_map.len() + 1 == self.max_child {
+                                    let new_node = Node::new(Some(currrent_depth + 1),Some( "<*>".to_string()));
+                                    let new_node = Rc::new(RefCell::new(new_node));
+                                    children_map.insert("<*>".to_string(), Rc::clone(&new_node));
+                                    drop(parent_borrow);
+                                    parent_node = Rc::clone(&new_node);
+                                }else{
+                                    // !有待考证
+                                    unreachable!()
+                                }
+                            }
+                        }
+                        // token has numbers
+                        else{
+                            // child has "<*>"
+                            if let Some(next_node) = children_map.get("<*>") {
+                                // 使用局部变量存储新节点引用
+                                let next_node_clone = Rc::clone(next_node);
+                                drop(parent_borrow); // 释放当前借用
+                                parent_node = next_node_clone;
+                            } 
+                            else{
+                                let new_node = Node::new(Some(currrent_depth + 1),Some( "<*>".to_string()));
+                                let new_node = Rc::new(RefCell::new(new_node));
+                                children_map.insert("<*>".to_string(), Rc::clone(&new_node));
+                                drop(parent_borrow);
+                                parent_node = Rc::clone(&new_node);
+                            }
+                        }
+                        // // 创建新节点并插入到 children_map 中
+                        // let new_node = Rc::new(RefCell::new(Node::new(currrent_depth + 1, token.clone())));
+                        // children_map.insert(token.to_string(), Rc::clone(&new_node));
+                        
+                    }
+                }
+                _ => panic!("Unexpected child_or_logcluster variant"),
+            }
+            currrent_depth += 1;
+        }
+    }
+
+    fn print_tree(&self, node: &Node, dep: usize){
+        let mut p_str = String::new();
+        for _ in 0..dep {
+            p_str.push('\t');
+        }
         
-    //     if !rn.child_d.contains_key(&seq_len.to_string()) {
-    //         return ret_log_clust;
-    //     }
-        
-    //     let mut parentn = rn.child_d.get(&seq_len.to_string()).unwrap();
-    //     let mut current_depth = 1;
-        
-    //     for token in seq.iter() {
-    //         if current_depth >= self.depth || current_depth > seq_len {
-    //             break;
-    //         }
+        if node.depth == 0 {
+            p_str += "Root";
+        } else if node.depth == 1 {
+            p_str += &format!("<{}>", node.digit_or_token);
+        } else {
+            p_str += node.digit_or_token.as_ref();
+        }
+
+        println!("{}", p_str);
+
+        if node.depth == self.depth {
+            return;
+        }
+
+        if let ChildOrLogCluster::Children(children_map) = &node.child_or_logcluster{
+            for (_, child) in children_map{
+                let child_borrow = child.borrow();
+                self.print_tree(&*child_borrow, dep + 1);
+            }       
             
-    //         if let Some(next_node) = parentn.child_d.get(token) {
-    //             parentn = next_node;
-    //         } else if let Some(wildcard_node) = parentn.child_d.get("<*>") {
-    //             parentn = wildcard_node;
-    //         } else {
-    //             return ret_log_clust;
-    //         }
-    //         current_depth += 1;
-    //     }
-        
-    //     if let Some(log_clust_l) = parentn.child_d.get("logClustL") {
-    //         ret_log_clust = self.fast_match(log_clust_l, &seq);
-    //     }
-        
-    //     ret_log_clust
-    // }
+        }
+    }
 }
+
