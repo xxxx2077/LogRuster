@@ -432,10 +432,6 @@ impl LogParser {
                                 parent_node = Rc::clone(&new_node);
                             }
                         }
-                        // // 创建新节点并插入到 children_map 中
-                        // let new_node = Rc::new(RefCell::new(Node::new(currrent_depth + 1, token.clone())));
-                        // children_map.insert(token.to_string(), Rc::clone(&new_node));
-                        
                     }
                 }
                 _ => panic!("Unexpected child_or_logcluster variant"),
