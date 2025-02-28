@@ -356,12 +356,13 @@ impl LogParser {
 
         for token in &log_clust.log_event{
             if currrent_depth >= self.depth || currrent_depth > seq_len{
-                match &mut parent_node.borrow_mut().child_or_logcluster{
+                let mut parent_node_borrow = parent_node.borrow_mut();
+                match &mut parent_node_borrow.child_or_logcluster{
                     ChildOrLogCluster::LogClusters(log_clusts) =>{
                         log_clusts.push(log_clust.clone());
                     }
                     ChildOrLogCluster::Children(_)=>{
-                        parent_node.borrow_mut().child_or_logcluster = ChildOrLogCluster::LogClusters(vec![log_clust.clone()]);
+                        parent_node_borrow.child_or_logcluster = ChildOrLogCluster::LogClusters(vec![log_clust.clone()]);
                     }
                 }
 
