@@ -54,7 +54,15 @@ struct Node {
 }
 
 impl Node {
-    fn new(depth: usize, digit_or_token: String) -> Self {
+    fn new(depth: Option<usize>, digit_or_token: Option<String>) -> Self {
+        let depth = match depth{
+            Some(dep) => dep,
+            None => 0,
+        };
+        let digit_or_token = match digit_or_token{
+            Some(digit_or_token) => digit_or_token,
+            None => String::new(),
+        };
         Node {
             depth,
             digit_or_token,
@@ -143,6 +151,7 @@ impl LogParser {
         self.log_file_path = Some(self.get_logfile_path());
         self.load_data()?;
 
+        let mut root_node = Node::new(None,None);
         let df = match &self.df_log{
             Some(df) => df,
             None => panic!("df_log is None"),
@@ -164,6 +173,8 @@ impl LogParser {
                     .collect();
                 
                 println!("LogID: {}, LogMessage: {:?}", id, logmessageL);
+                let new_logcluster = LogCluster::new(id.to_string(), logmessageL);
+                self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
             }
         }
         
@@ -331,7 +342,7 @@ impl LogParser {
                     Rc::clone(children_map.get(&seq_len_str).unwrap())
                 } else {
                     // 如果不存在，则创建新节点并插入到 map 中
-                    let new_node = Rc::new(RefCell::new(Node::new(1, seq_len_str.clone())));
+                    let new_node = Rc::new(RefCell::new(Node::new(Some(1), Some(seq_len_str.clone()))));
                     children_map.insert(seq_len_str.clone(), Rc::clone(&new_node));
                     Rc::clone(&new_node)
                 }
@@ -371,7 +382,7 @@ impl LogParser {
                         if !self.has_numbers(token){
                             if let Some(next_node) = children_map.get("<*>") {
                                 if children_map.len() < self.max_child{
-                                    let new_node = Node::new(currrent_depth + 1, token.clone());
+                                    let new_node = Node::new(Some(currrent_depth + 1), Some(token.clone()));
                                     let new_node = Rc::new(RefCell::new(new_node));
                                     children_map.insert(token.clone(), Rc::clone(&new_node));
                                     drop(parent_borrow);
@@ -385,13 +396,13 @@ impl LogParser {
                             } 
                             else{
                                 if children_map.len() + 1 < self.max_child{
-                                    let new_node = Node::new(currrent_depth + 1,token.clone());
+                                    let new_node = Node::new(Some(currrent_depth + 1),Some(token.clone()));
                                     let new_node = Rc::new(RefCell::new(new_node));
                                     children_map.insert(token.clone(), Rc::clone(&new_node));
                                     drop(parent_borrow);
                                     parent_node = Rc::clone(&new_node);
                                 }else if children_map.len() + 1 == self.max_child {
-                                    let new_node = Node::new(currrent_depth + 1, "<*>".to_string());
+                                    let new_node = Node::new(Some(currrent_depth + 1),Some( "<*>".to_string()));
                                     let new_node = Rc::new(RefCell::new(new_node));
                                     children_map.insert("<*>".to_string(), Rc::clone(&new_node));
                                     drop(parent_borrow);
@@ -412,7 +423,7 @@ impl LogParser {
                                 parent_node = next_node_clone;
                             } 
                             else{
-                                let new_node = Node::new(currrent_depth + 1, "<*>".to_string());
+                                let new_node = Node::new(Some(currrent_depth + 1),Some( "<*>".to_string()));
                                 let new_node = Rc::new(RefCell::new(new_node));
                                 children_map.insert("<*>".to_string(), Rc::clone(&new_node));
                                 drop(parent_borrow);
@@ -429,6 +440,10 @@ impl LogParser {
             }
             currrent_depth += 1;
         }
+    }
+
+    fn print_tree(node:&Node, depth:usize){
+
     }
 
 }
