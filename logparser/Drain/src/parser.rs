@@ -177,6 +177,7 @@ impl LogParser {
                 self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
             }
         }
+        self.print_tree(&root_node, 1);
         
         Ok(())
 
@@ -443,9 +444,33 @@ impl LogParser {
         }
     }
 
-    fn print_tree(node:&Node, depth:usize){
+    fn print_tree(&self, node: &Node, dep: usize){
+        let mut p_str = String::new();
+        for _ in 0..dep {
+            p_str.push('\t');
+        }
+        
+        if node.depth == 0 {
+            p_str += "Root";
+        } else if node.depth == 1 {
+            p_str += &format!("<{}>", node.digit_or_token);
+        } else {
+            p_str += node.digit_or_token.as_ref();
+        }
 
+        println!("{}", p_str);
+
+        if node.depth == self.depth {
+            return;
+        }
+
+        if let ChildOrLogCluster::Children(children_map) = &node.child_or_logcluster{
+            for (_, child) in children_map{
+                let child_borrow = child.borrow();
+                self.print_tree(&*child_borrow, dep + 1);
+            }       
+            
+        }
     }
-
 }
 
