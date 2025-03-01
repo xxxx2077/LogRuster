@@ -27,12 +27,12 @@ use std::collections::{HashSet,HashMap};
 // * 日志组
 #[derive(Debug,Clone)]
 struct LogCluster{
-    log_id_lists : String,
+    log_id_lists : Vec<String>,
     log_event: Vec<String>,
 }
 
 impl LogCluster{
-    fn new(log_id_lists : String,log_event: Vec<String>) -> Self {
+    fn new(log_id_lists : Vec<String>,log_event: Vec<String>) -> Self {
         LogCluster{
             log_id_lists,
             log_event,
@@ -151,7 +151,9 @@ impl LogParser {
         self.log_file_path = Some(self.get_logfile_path());
         self.load_data()?;
 
+        let mut count = 0;
         let mut root_node = Node::new(None,None);
+        let mut log_clust:Vec<LogCluster> = Vec::new();
         let df = match &self.df_log{
             Some(df) => df,
             None => panic!("df_log is None"),
@@ -163,7 +165,8 @@ impl LogParser {
         let series_lineid = df.column("LineId")?.utf8()?;
         // 遍历每一行
         for (line_id, content) in series_lineid.into_iter().zip(series_content.into_iter()) {
-            println!("line_id:{:?}, content:{:?}",line_id,content);
+            //*test */
+            // println!("line_id:{:?}, content:{:?}",line_id,content);
             if let (Some(id), Some(content)) = (line_id, content) {
                 // 先将预处理结果存储在一个持久的变量中
                 let processed_content = self.preprocess(content);
@@ -172,11 +175,51 @@ impl LogParser {
                     .map(|s| s.to_string())
                     .collect();
                 
-                println!("LogID: {}, LogMessage: {:?}", id, logmessage_list);
-                let new_logcluster = LogCluster::new(id.to_string(), logmessage_list);
-                self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
+                //*test */
+                // println!("LogID: {}, LogMessage: {:?}", id, &logmessage_list);
+                let match_cluster = self.tree_search(&mut root_node, &logmessage_list);
+
+                //*test */
+                // println!("{:?}", match_cluster);
+                if let Some(mut match_cluster) = match_cluster{
+                    let new_template = self.get_template(&logmessage_list,&match_cluster.log_event);
+                    match_cluster.log_id_lists.push(id.to_string());
+
+                    // 检查新的模板是否与现有的不同
+                    if new_template.join(" ") != match_cluster.log_event.join(" ") {
+                        match_cluster.log_event = new_template;
+                    }
+                    
+                }else{
+                    let new_logcluster = LogCluster::new(vec![id.to_string()], logmessage_list);                  
+                    self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
+                    log_clust.push(new_logcluster);
+                }
+
+                count += 1;
+
+                if let Some(df) = &self.df_log {
+                    let total_rows = df.height();
+                    if count % 1000 == 0 || count == total_rows{
+                        let progress:f64;
+                        if count == 0{
+                            progress = 0.0;
+                        }
+                        else{
+                            progress = (count as f64) * 100.0 / (total_rows as f64);
+                        }
+                        println!("Processed {:.1}%", progress);
+                    }
+                }
             }
         }
+
+        if !Path::new(&self.out_dir).exists() {
+            fs::create_dir_all(&self.out_dir).expect("Failed to create directory");
+        }
+
+        self.output_result(log_clust);
+
         self.print_tree(&root_node, 1);
         
         Ok(())
@@ -438,6 +481,125 @@ impl LogParser {
             }
             currrent_depth += 1;
         }
+    }
+
+    fn seq_dist(&self,seq1: &Vec<String>, seq2: &Vec<String>) -> (f64, i32) {
+        // 确保两个序列长度相同
+        assert_eq!(seq1.len(), seq2.len(), "The sequences must have the same length.");
+    
+        let mut sim_tokens = 0;
+        let mut num_of_par = 0;
+    
+        for (token1, token2) in seq1.iter().zip(seq2.iter()) {
+            if token1 == "<*>" {
+                num_of_par += 1;
+                continue;
+            }
+            if token1 == token2 {
+                sim_tokens += 1;
+            }
+        }
+    
+        // 计算相似令牌的比例
+        let ret_val = sim_tokens as f64 / seq1.len() as f64;
+    
+        (ret_val, num_of_par)
+    }
+
+    fn get_template(&self,seq1: &[String], seq2: &[String]) -> Vec<String> {
+        // 确保两个序列长度相同
+        assert_eq!(seq1.len(), seq2.len(), "Sequences must be of the same length");
+    
+        let mut ret_val = Vec::with_capacity(seq1.len());
+    
+        for (word1, word2) in seq1.iter().zip(seq2.iter()) {
+            if word1 == word2 {
+                ret_val.push(word1.clone());
+            } else {
+                ret_val.push("<*>".to_string());
+            }
+        }
+    
+        ret_val
+    }
+
+    fn fast_match<'a>(&self, log_cluster_l:&'a Vec<LogCluster>, seq: &Vec<String>)->Option<&'a LogCluster>{
+        let mut ret_log_clust:Option<&LogCluster> = None;
+
+        let mut max_sim = -1.0;
+        let mut max_num_of_para = -1;
+        let mut max_clust:Option<&LogCluster> = None;
+
+        for log_clust in log_cluster_l{
+           let (cur_sim, cur_num_of_para) = self.seq_dist(&log_clust.log_event, seq);
+           if cur_sim > max_sim || (cur_sim == max_sim && cur_num_of_para > max_num_of_para){
+                max_sim = cur_sim;
+                max_num_of_para = cur_num_of_para;
+                max_clust = Some(log_clust);
+           } 
+        }
+
+        if max_sim >= self.st{
+            ret_log_clust = max_clust;
+        }
+
+        ret_log_clust
+    }
+
+    fn tree_search(&self, root_node: &mut Node, seq: &Vec<String>)->Option<LogCluster>{
+        let seq_len = seq.len();
+        let seq_len_str = seq.len().to_string();
+
+        let mut parent_node:Rc<RefCell<Node>>;
+
+        match &root_node.child_or_logcluster{
+            ChildOrLogCluster::Children(children_map)=>{
+                if !children_map.contains_key(&seq_len_str){
+                    return None;
+                }
+                parent_node = Rc::clone(children_map.get(&seq_len_str).unwrap());
+            }
+            _ => panic!("first_layer_node is logcluster")
+        }
+
+        let mut current_depth = 1;
+
+        for token in seq{
+            let mut parent_borrow = parent_node.borrow_mut();
+            if current_depth >= self.depth || current_depth > seq_len{
+                break;
+            }
+            match &mut parent_borrow.child_or_logcluster{
+                ChildOrLogCluster::Children(children_map)=>{
+                    if children_map.contains_key(token){
+                        let next_node = children_map.get(token).unwrap();
+                        let next_node_clone = Rc::clone(next_node);
+                        drop(parent_borrow);
+                        parent_node = next_node_clone;
+                    }else if children_map.contains_key("<*>"){ 
+                        let next_node = children_map.get("<*>").unwrap();
+                        let next_node_clone = Rc::clone(next_node);
+                        drop(parent_borrow);
+                        parent_node = next_node_clone;
+                    }else{
+                        return None;
+                    }
+                }
+                _ => unreachable!()
+            } 
+
+            current_depth += 1;
+        }
+
+        let parent_borrow = parent_node.borrow();
+        let log_cluster_l = match &parent_borrow.child_or_logcluster{
+            ChildOrLogCluster::LogClusters(log_clusters) => log_clusters,
+            _ => unreachable!(),
+        };
+
+        let ret_log_clust = self.fast_match(log_cluster_l, seq).cloned();
+
+        ret_log_clust
     }
 
     fn print_tree(&self, node: &Node, dep: usize){
