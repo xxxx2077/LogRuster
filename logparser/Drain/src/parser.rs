@@ -10,6 +10,7 @@ use std::rc::Rc;
 use csv::Writer;
 use polars::prelude::*;
 use std::collections::{HashSet,HashMap};
+use md5::{Digest, Md5};
 
 // pub struct LogParser{
 //     indir : String,
@@ -630,5 +631,167 @@ impl LogParser {
             
         }
     }
+
+    fn output_result(&self, log_clust_l: &Vec<LogCluster>) -> std::result::Result<(), Box<dyn Error>>{
+        let mut df_log = match &mut self.df_log {
+            Some(df_log) => df_log,
+            None => panic!("df_log is None"),
+        };
+        let row_count = df_log.height();
+        let mut log_templates = vec![None;row_count];
+        let mut log_templateids = vec![None; row_count];
+        let mut df_events = Vec::new();
+        // 创建 DataFrame
+        // let mut columns: Vec<Series> = Vec::new();
+        // let mut series_map: std::collections::HashMap<&String, Vec<String>> = std::collections::HashMap::new();
+
+        // for entry in &log_entries {
+        //     for (key, value) in entry {
+        //         series_map.entry(key).or_insert_with(Vec::new).push(value.clone());
+        //     }
+        // }
+
+        // for (key, values) in series_map {
+        //     println!("key:{:?}",key);
+        //     columns.push(Series::new(key.trim_matches('<').trim_matches('>'), values));
+        // }
+
+        // let df = DataFrame::new(columns)?;
+        for log_clust in log_clust_l {
+            let template_str = log_clust.log_event.join(" ");
+            let occurrence = log_clust.log_id_lists.len();
+            let template_id = format!("{:x}", Md5::digest(template_str.as_bytes()))[..8].to_string();
+
+            for log_id in &log_clust.log_id_lists {
+                let log_id = match log_id.parse::<usize>() {
+                    Ok(num) => num,
+                    Err(e) => panic!("Failed to parse string: {}", e),
+                };
+                let idx = log_id - 1;
+                log_templates[idx] = Some(template_str);
+                log_templateids[idx] = Some(template_id);
+            }
+            df_events.push(Event {
+                event_id: template_id,
+                event_template: template_str,
+                occurrences: occurrence,
+            });
+        }
+
+        let log_templateids = Series::new("EventId",log_templateids);
+        let log_templates = Series::new("EventTemplate",log_templates);
+
+        let mut parameter_list = Vec::new();
+        
+        if self.keep_para {
+            for row_id in 0..row_count{
+                let row = df_log.get_row(row_id);              
+                parameter_list.push(self.get_parameter_list(row));
+            }
+            let mut parameter_series = Series::new("ParameterList", parameter_list);
+            let mut df = df_log.with_column(parameter_series)?;
+            df_log = df;
+        };
+
+        let log_name = match &self.log_name{
+            Some(log_name)=>log_name,
+            None=> panic!("no log_name"),
+        } ;
+        // Write structured logs to CSV
+        let structured_path = Path::new(&self.out_dir).join(format!("{}_structured.csv", log_name));
+        let mut wtr = Writer::from_path(structured_path).expect("Failed to create writer");
+        wtr.write_record(["EventId", "EventTemplate", "ParameterList"])
+            .expect("Failed to write header");
+
+        for entry in &self.df_log {
+            wtr.serialize(entry).expect("Failed to serialize entry");
+        }
+        wtr.flush().expect("Failed to flush writer");
+
+        // Generate event templates CSV
+        let mut occ_dict = HashMap::new();
+        for entry in &self.df_log {
+            if let Some(template) = &entry.event_template {
+                *occ_dict.entry(template.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let unique_templates: Vec<_> = occ_dict.keys().cloned().collect();
+        let mut df_event = Vec::new();
+        for template in unique_templates {
+            let event_id = format!("{:x}", Md5::digest(template.as_bytes()))[..8].to_string();
+            let occurrences = occ_dict[&template];
+            df_event.push(Event {
+                event_id,
+                event_template: template,
+                occurrences,
+            });
+        }
+
+        let templates_path = Path::new(&self.out_dir).join(format!("{}_templates.csv", log_name));
+        let mut wtr = Writer::from_path(templates_path).expect("Failed to create writer");
+        wtr.write_record(["EventId", "EventTemplate", "Occurrences"])
+            .expect("Failed to write header");
+
+        for event in df_event {
+            wtr.serialize(event).expect("Failed to serialize event");
+        }
+        wtr.flush().expect("Failed to flush writer");
+
+        Ok(())
+    }
+
+    fn get_parameter_list(&self, row:row::Row<'_>) -> Vec<String> {
+        // Step 1: Replace placeholders with <*>
+        let template_regex = Regex::new(r"<.{1,5}>").unwrap();
+        let template_str = template_regex.replace_all(&self.event_template, "<*>");
+
+        // If there are no placeholders, return an empty list
+        if !template_str.contains("<*>") {
+            return vec![];
+        }
+
+        // Step 2: Escape special characters except for <*>
+        let mut escaped_template = String::new();
+        for c in template_str.chars() {
+            if c.is_alphanumeric() || c == '*' {
+                escaped_template.push(c);
+            } else {
+                escaped_template.push('\\');
+                escaped_template.push(c);
+            }
+        }
+
+        // Step 3: Replace multiple spaces with \s+
+        let space_regex = Regex::new(r"\\ +").unwrap();
+        let escaped_template = space_regex.replace_all(&escaped_template, r"\\s+");
+
+        // Step 4: Construct the final regex pattern
+        let final_pattern = format!("^{}$", escaped_template.replace("<*>", "(.*?)"));
+
+        // Step 5: Find matches in the content
+        let re = Regex::new(&final_pattern).unwrap();
+        let captures = re.captures(&self.content);
+
+        match captures {
+            Some(caps) => caps.iter().skip(1) // Skip the entire match
+                .filter_map(|c| c.map(|m| m.as_str().to_string()))
+                .collect(),
+            None => vec![],
+        }
+    }
 }
 
+#[derive(Debug, Serialize)]
+struct Event {
+    event_id: String,
+    event_template: String,
+    occurrences: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct LogEntry {
+    event_id: Option<String>,
+    event_template: Option<String>,
+    parameter_list: Option<Vec<String>>,
+}
