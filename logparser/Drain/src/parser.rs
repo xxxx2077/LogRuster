@@ -1,11 +1,12 @@
 use fancy_regex::Regex as FancyRegex;
+use polars::export::rayon::string;
 use regex::Regex;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::error::Error;
 use std::fs::{self,File}; 
 use std::path::{Path,PathBuf};
-use std::io::{BufReader, BufRead, Write};
+use std::io::{BufRead, BufReader, Cursor, Write};
 use std::rc::Rc;
 use csv::Writer;
 use polars::prelude::*;
@@ -167,7 +168,7 @@ impl LogParser {
         // 遍历每一行
         for (line_id, content) in series_lineid.into_iter().zip(series_content.into_iter()) {
             //*test */
-            // println!("line_id:{:?}, content:{:?}",line_id,content);
+            println!("line_id:{:?}, content:{:?}",line_id,content);
             if let (Some(id), Some(content)) = (line_id, content) {
                 // 先将预处理结果存储在一个持久的变量中
                 let processed_content = self.preprocess(content);
@@ -179,12 +180,24 @@ impl LogParser {
                 //*test */
                 // println!("LogID: {}, LogMessage: {:?}", id, &logmessage_list);
                 let match_cluster = self.tree_search(&mut root_node, &logmessage_list);
+                match &match_cluster {
+                    Some(mc) =>{
+                        println!("match_cluster is not None");
+                        println!("match_cluster: \n\t{:?}", mc);
+                    },
+                    None => println!("match_cluster is None"),
+                }
+                
 
                 //*test */
                 // println!("{:?}", match_cluster);
                 if let Some(mut match_cluster) = match_cluster{
                     let new_template = self.get_template(&logmessage_list,&match_cluster.log_event);
+                    //*test */
+                    println!("\tnew_template : {:?}", new_template);
                     match_cluster.log_id_lists.push(id.to_string());
+                    //*test */
+                    println!("\tnew_log_id_lists:{:?}", &match_cluster.log_id_lists);
 
                     // 检查新的模板是否与现有的不同
                     if new_template.join(" ") != match_cluster.log_event.join(" ") {
@@ -193,6 +206,8 @@ impl LogParser {
                     
                 }else{
                     let new_logcluster = LogCluster::new(vec![id.to_string()], logmessage_list);                  
+                    //*test */
+                    println!("\tnew_cluster : {:?}", new_logcluster);
                     self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
                     log_clust.push(new_logcluster);
                 }
@@ -215,11 +230,17 @@ impl LogParser {
             }
         }
 
+        //*test */
+        println!("log_clust : {:?}", log_clust);
         if !Path::new(&self.out_dir).exists() {
             fs::create_dir_all(&self.out_dir).expect("Failed to create directory");
         }
 
-        self.output_result(log_clust);
+        if let Err(e) = self.output_result(&log_clust){
+            eprintln!("Error occurred: {}", e);
+        } else {
+            println!("Function executed successfully.");
+        }
 
         self.print_tree(&root_node, 1);
         
@@ -632,35 +653,27 @@ impl LogParser {
         }
     }
 
-    fn output_result(&self, log_clust_l: &Vec<LogCluster>) -> std::result::Result<(), Box<dyn Error>>{
+    fn output_result(&mut self, log_clust_l: &Vec<LogCluster>) -> std::result::Result<(), Box<dyn Error>>{
         let mut df_log = match &mut self.df_log {
             Some(df_log) => df_log,
             None => panic!("df_log is None"),
         };
         let row_count = df_log.height();
         let mut log_templates = vec![None;row_count];
-        let mut log_templateids = vec![None; row_count];
+        let mut log_templateids = vec![None;row_count];
         let mut df_events = Vec::new();
-        // 创建 DataFrame
-        // let mut columns: Vec<Series> = Vec::new();
-        // let mut series_map: std::collections::HashMap<&String, Vec<String>> = std::collections::HashMap::new();
-
-        // for entry in &log_entries {
-        //     for (key, value) in entry {
-        //         series_map.entry(key).or_insert_with(Vec::new).push(value.clone());
-        //     }
-        // }
-
-        // for (key, values) in series_map {
-        //     println!("key:{:?}",key);
-        //     columns.push(Series::new(key.trim_matches('<').trim_matches('>'), values));
-        // }
-
-        // let df = DataFrame::new(columns)?;
         for log_clust in log_clust_l {
+            //*test */
+            println!("log_logIDL: {:?}", log_clust.log_id_lists);
+            println!("log_template: {:?}", log_clust.log_event);
             let template_str = log_clust.log_event.join(" ");
-            let occurrence = log_clust.log_id_lists.len();
+            let occurrence = log_clust.log_id_lists.len() as u64;
             let template_id = format!("{:x}", Md5::digest(template_str.as_bytes()))[..8].to_string();
+
+            //*test */
+            println!("template_str = {:?}", template_str);
+            println!("template_id = {:?}", template_id);
+            println!("occurrence = {:?}", template_str);
 
             for log_id in &log_clust.log_id_lists {
                 let log_id = match log_id.parse::<usize>() {
@@ -668,8 +681,8 @@ impl LogParser {
                     Err(e) => panic!("Failed to parse string: {}", e),
                 };
                 let idx = log_id - 1;
-                log_templates[idx] = Some(template_str);
-                log_templateids[idx] = Some(template_id);
+                log_templates[idx] = Some(template_str.clone());
+                log_templateids[idx] = Some(template_id.clone());
             }
             df_events.push(Event {
                 event_id: template_id,
@@ -678,18 +691,51 @@ impl LogParser {
             });
         }
 
-        let log_templateids = Series::new("EventId",log_templateids);
-        let log_templates = Series::new("EventTemplate",log_templates);
+        // 提取每列的数据
+        let event_ids: Vec<_> = df_events.iter().map(|e| e.event_id.clone()).collect();
+        let event_templates: Vec<_> = df_events.iter().map(|e| e.event_template.clone()).collect();
+        let occurrences: Vec<_> = df_events.iter().map(|e| e.occurrences).collect();
 
-        let mut parameter_list = Vec::new();
-        
+        // 创建 Series
+        let event_ids_series = Series::new("EventId", event_ids);
+        let event_templates_series = Series::new("EventTemplate", event_templates);
+        let occurrences_series = Series::new("Occurrences", occurrences);
+
+        // 创建 DataFrame
+        let df_event = DataFrame::new(vec![event_ids_series, event_templates_series, occurrences_series])?;
+
+        let log_templateids_series = Series::new("EventId",log_templateids);
+        let log_templates_series = Series::new("EventTemplate",log_templates.clone());
+
+        //*test */
+        println!("df_log add new col");
+        df_log = df_log.with_column(log_templateids_series)?;
+        df_log = df_log.with_column(log_templates_series.clone())?;
+
+        //*test */
+        println!("update df_log, df_log is {:?}",df_log);
         if self.keep_para {
-            for row_id in 0..row_count{
-                let row = df_log.get_row(row_id);              
-                parameter_list.push(self.get_parameter_list(row));
-            }
-            let mut parameter_series = Series::new("ParameterList", parameter_list);
+            let df_content_series = df_log.column("Content")?;
+            //*test */
+            println!("get col[content]");
+            let log_templates_series = &log_templates_series;
+            // ! bug here
+            let res = get_parameter_list(df_content_series,log_templates_series, row_count);
+            //*test */
+            println!("res : {:?}", res);
+            let flattened: Vec<String> = res.into_iter()
+                .map(|sublist| sublist.join(", "))
+                .collect();
+
+            //*test */
+            println!("flattened : {:?}", flattened);
+            let parameter_series = Series::new("ParameterList", &flattened);
+            //*test */
+            println!("add col[para]");
+            println!("para_seris : {:?}", &parameter_series);
             let mut df = df_log.with_column(parameter_series)?;
+            //*test */
+            println!("add col[para] successfully");
             df_log = df;
         };
 
@@ -697,38 +743,49 @@ impl LogParser {
             Some(log_name)=>log_name,
             None=> panic!("no log_name"),
         } ;
+
+        //*test */
+        println!("log_name : {:?}", log_name);
         // Write structured logs to CSV
         let structured_path = Path::new(&self.out_dir).join(format!("{}_structured.csv", log_name));
-        let mut wtr = Writer::from_path(structured_path).expect("Failed to create writer");
-        wtr.write_record(["EventId", "EventTemplate", "ParameterList"])
-            .expect("Failed to write header");
+        //*test */
+        println!("structured_path is {:?}", structured_path);
+        // 打开或创建一个文件用于写入 CSV 数据
+        let file = File::create(structured_path)?;
 
-        for entry in &self.df_log {
-            wtr.serialize(entry).expect("Failed to serialize entry");
-        }
-        wtr.flush().expect("Failed to flush writer");
+        // 使用 CsvWriter 将 DataFrame 写入文件
+        CsvWriter::new(file)
+            .has_header(true)  // 是否包含列名作为头部
+            .finish(df_log)?;
 
         // Generate event templates CSV
-        let mut occ_dict = HashMap::new();
-        for entry in &self.df_log {
-            if let Some(template) = &entry.event_template {
-                *occ_dict.entry(template.clone()).or_insert(0) += 1;
-            }
+        // 创建一个空的 HashMap 来存储模板和它们的计数
+        let mut occ_dict: HashMap<&str, i32> = HashMap::new();
+
+        // 遍历日志模板并统计每个模板出现的次数
+        for template in log_templates.iter() {
+            let template_ref = match template{
+                Some(tem)=> tem.as_ref(),
+                None => "",
+            };
+            *occ_dict.entry(template_ref).or_insert(0) += 1;
         }
 
         let unique_templates: Vec<_> = occ_dict.keys().cloned().collect();
         let mut df_event = Vec::new();
         for template in unique_templates {
             let event_id = format!("{:x}", Md5::digest(template.as_bytes()))[..8].to_string();
-            let occurrences = occ_dict[&template];
+            let occurrence = occ_dict[&template];
             df_event.push(Event {
                 event_id,
-                event_template: template,
-                occurrences,
+                event_template: template.to_string(),
+                occurrences: occurrence.try_into()?,
             });
         }
 
         let templates_path = Path::new(&self.out_dir).join(format!("{}_templates.csv", log_name));
+        //*test */
+        println!("templates_path is {:?}", templates_path);
         let mut wtr = Writer::from_path(templates_path).expect("Failed to create writer");
         wtr.write_record(["EventId", "EventTemplate", "Occurrences"])
             .expect("Failed to write header");
@@ -741,52 +798,68 @@ impl LogParser {
         Ok(())
     }
 
-    fn get_parameter_list(&self, row:row::Row<'_>) -> Vec<String> {
-        // Step 1: Replace placeholders with <*>
-        let template_regex = Regex::new(r"<.{1,5}>").unwrap();
-        let template_str = template_regex.replace_all(&self.event_template, "<*>");
-
-        // If there are no placeholders, return an empty list
-        if !template_str.contains("<*>") {
-            return vec![];
-        }
-
-        // Step 2: Escape special characters except for <*>
-        let mut escaped_template = String::new();
-        for c in template_str.chars() {
-            if c.is_alphanumeric() || c == '*' {
-                escaped_template.push(c);
-            } else {
-                escaped_template.push('\\');
-                escaped_template.push(c);
-            }
-        }
-
-        // Step 3: Replace multiple spaces with \s+
-        let space_regex = Regex::new(r"\\ +").unwrap();
-        let escaped_template = space_regex.replace_all(&escaped_template, r"\\s+");
-
-        // Step 4: Construct the final regex pattern
-        let final_pattern = format!("^{}$", escaped_template.replace("<*>", "(.*?)"));
-
-        // Step 5: Find matches in the content
-        let re = Regex::new(&final_pattern).unwrap();
-        let captures = re.captures(&self.content);
-
-        match captures {
-            Some(caps) => caps.iter().skip(1) // Skip the entire match
-                .filter_map(|c| c.map(|m| m.as_str().to_string()))
-                .collect(),
-            None => vec![],
-        }
-    }
 }
 
+// ! wait to test
+    fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:usize)->Vec<Vec<String>>{
+        //*test */
+        println!("[content_col] = {:?}", content_col);
+        println!("[content_col] = {:?}", log_templates_col);
+        let mut parameter_list = Vec::new();
+        for idx in 0..row_count{
+            let row_content = content_col.get(idx).to_string();
+            let row_log_template = log_templates_col.get(idx).to_string();
+            // Step 1: Replace placeholders with <*>
+            let template_regex = Regex::new(r"<.{1,5}>").unwrap();
+            let template_str = template_regex.replace_all(&row_log_template, "<*>");
+
+            // If there are no placeholders, return an empty list
+            if !template_str.contains("<*>") {
+                return vec![];
+            }
+
+            // Step 2: Escape special characters except for <*>
+            let mut escaped_template = String::new();
+            for c in template_str.chars() {
+                if c.is_alphanumeric() || c == '*' {
+                    escaped_template.push(c);
+                } else {
+                    escaped_template.push('\\');
+                    escaped_template.push(c);
+                }
+            }
+
+            // Step 3: Replace multiple spaces with \s+
+            let space_regex = Regex::new(r"\\ +").unwrap();
+            let escaped_template = space_regex.replace_all(&escaped_template, r"\\s+");
+
+            // Step 4: Construct the final regex pattern
+            let final_pattern = format!("^{}$", escaped_template.replace("<*>", "(.*?)"));
+
+            // Step 5: Find matches in the content
+            let re = Regex::new(&final_pattern).unwrap();
+            let captures = re.captures(&row_content);
+
+            let parameter_l = match captures {
+                Some(caps) => caps.iter().skip(1) // Skip the entire match
+                    .filter_map(|c| c.map(|m| m.as_str().to_string()))
+                    .collect(),
+                None => vec![],
+            };
+
+            if parameter_l.len() == 0{
+                parameter_list.push(vec![]);
+            }else{
+                parameter_list.push(parameter_l);
+            }
+        }
+        parameter_list
+    }
 #[derive(Debug, Serialize)]
 struct Event {
     event_id: String,
     event_template: String,
-    occurrences: usize,
+    occurrences: u64,
 }
 
 #[derive(Debug, Serialize)]

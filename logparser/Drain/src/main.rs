@@ -32,5 +32,9 @@ fn main() {
         None,
     );
 
-    log_parser.parse(log_name.to_string());
+    if let Err(e) = log_parser.parse(log_name.to_string()) {
+        eprintln!("Error occurred: {}", e);
+    } else {
+        println!("Function executed successfully.");
+    }
 }
