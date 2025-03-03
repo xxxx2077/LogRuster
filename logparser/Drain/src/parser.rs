@@ -1,30 +1,16 @@
 use fancy_regex::Regex as FancyRegex;
-use polars::export::rayon::string;
 use regex::Regex;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::error::Error;
 use std::fs::{self,File}; 
 use std::path::{Path,PathBuf};
-use std::io::{BufRead, BufReader, Cursor, Write};
+use std::io::{BufRead, BufReader};
 use std::rc::Rc;
 use csv::Writer;
 use polars::prelude::*;
-use std::collections::{HashSet,HashMap};
+use std::collections::HashMap;
 use md5::{Digest, Md5};
-
-// pub struct LogParser{
-//     indir : String,
-//     outdir : String,
-//     depth : u32,
-//     similarity_threshold : f64,
-//     max_child : u64,
-//     log_format : String,
-//     log_name : Option<String>,
-//     log_file_path : Option<PathBuf>,
-//     df_log: Option<DataFrame>, 
-//     preprocess_regex : Vec<FancyRegex>,
-// }
 
 // * 日志组
 #[derive(Debug,Clone)]
@@ -125,26 +111,6 @@ impl LogParser {
         }
     }
 }
-
-
-// // 构造函数
-// pub fn new(indir: String, outdir: String, depth : u32, similarity_threshold:f64, max_child : u64,log_format: String, preprocess_regex : Vec<&'static str>) -> Self {
-//     // 编译所有正则表达式模式
-//     let preprocess_regex: Vec<FancyRegex> = preprocess_regex.iter()
-//         .map(|pattern| FancyRegex::new(pattern).expect("Failed to compile regex pattern"))
-//         .collect();
-//     LogParser {
-//         indir,
-//         outdir,
-//         depth,
-//         similarity_threshold,
-//         log_format,
-//         preprocess_regex,
-//         log_name : None,
-//         log_file_path: None, // 初始化为 None
-//         df_log : None,
-//     }
-// }
 
 impl LogParser {
     // 解析指定日志文件（公有方法）
@@ -705,6 +671,7 @@ impl LogParser {
         let occurrences_series = Series::new("Occurrences", occurrences);
 
         // 创建 DataFrame
+        // ? useless 
         let df_event = DataFrame::new(vec![event_ids_series, event_templates_series, occurrences_series])?;
 
         let log_templateids_series = Series::new("EventId",log_templateids);
@@ -736,7 +703,7 @@ impl LogParser {
             //*test */
             println!("add col[para]");
             println!("para_seris : {:?}", &parameter_series);
-            let mut df = df_log.with_column(parameter_series)?;
+            let df = df_log.with_column(parameter_series)?;
             //*test */
             println!("add col[para] successfully");
             df_log = df;
@@ -803,111 +770,83 @@ impl LogParser {
 
 }
 
-// ! wait to test
-    fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:usize)->Vec<Vec<String>>{
+fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:usize)->Vec<Vec<String>>{
+    //*test */
+    // println!("");
+    // println!("[content_col] = {:?}", content_col);
+    // println!("[log_templates_col] = {:?}", log_templates_col);
+    let mut parameter_list = Vec::new();
+    for idx in 0..row_count{
+        let row_content = content_col.get(idx).to_string();
+        let row_log_template = log_templates_col.get(idx).to_string();
         //*test */
-        println!("");
-        println!("[content_col] = {:?}", content_col);
-        println!("[log_templates_col] = {:?}", log_templates_col);
-        let mut parameter_list = Vec::new();
-        for idx in 0..row_count{
-            let row_content = content_col.get(idx).to_string();
-            let row_log_template = log_templates_col.get(idx).to_string();
-            //*test */
-            println!("(before) row_content:{}", row_content);
-            println!("(before) row_log_template:{}", row_log_template);
-            let row_content = row_content.trim_matches('"'); // 去掉两端的双引号
-            let row_log_template = row_log_template.trim_matches('"'); // 去掉两端的双引号
-            println!("(after) row_content:{}", row_content);
-            println!("(after) row_log_template:{}", row_log_template);
-            // Step 1: Replace placeholders with <*>
-            let template_regex = Regex::new(r"<[^<>]{1,5}>").unwrap();
-            let mut template = template_regex.replace_all(&row_log_template, "<*>").to_string();
-            //*test */
-            println!("(step1) [get_parameter_list] template_str = {}", template);
+        // println!("(before) row_content:{}", row_content);
+        // println!("(before) row_log_template:{}", row_log_template);
+        let row_content = row_content.trim_matches('"'); // 去掉两端的双引号
+        let row_log_template = row_log_template.trim_matches('"'); // 去掉两端的双引号
+        // println!("(after) row_content:{}", row_content);
+        // println!("(after) row_log_template:{}", row_log_template);
+        // Step 1: Replace placeholders with <*>
+        let template_regex = Regex::new(r"<[^<>]{1,5}>").unwrap();
+        let mut template = template_regex.replace_all(&row_log_template, "<*>").to_string();
+        //*test */
+        // println!("(step1) [get_parameter_list] template_str = {}", template);
 
-            // If there are no placeholders, return an empty list
-            if !template.contains("<*>") {
-                return vec![];
-            }
-
-            // Step 2: Escape special characters except for <*>
-            let escape_non_alnum = Regex::new(r"[^A-Za-z0-9]").unwrap();
-            template = escape_non_alnum.replace_all(&template, |caps: &regex::Captures| {
-                format!("\\{}", &caps[0])
-            }).to_string();
-            // let mut escaped_template = String::new();
-            // for c in template_str.chars() {
-            //     if c.is_alphanumeric() || c == '*' {
-            //         escaped_template.push(c);
-            //     } else {
-            //         escaped_template.push('\\');
-            //         escaped_template.push(c);
-            //     }
-            // }
-
-            //*test */
-            println!("(step2) [get_parameter_list] escaped_template = {}", template);
-
-            // Step 3: Replace multiple spaces with \s+
-            let handle_spaces = Regex::new(r"(\\ )+").unwrap();
-            template = handle_spaces.replace_all(&template, r"\s+").to_string();
-            // let space_regex = Regex::new(r"\\ +").unwrap();
-            // let escaped_template = space_regex.replace_all(&escaped_template, r"\\s+");
-            //*test */
-            println!("(step3) [get_parameter_list] escaped_template = {}", template);
-
-            // Step 4: Construct the final regex pattern
-            let final_pattern = format!(
-                "^{}$",
-                template.replace(r"\<\*\>", "(.*?)")
-            );
-            // let final_pattern = format!("^{}$", escaped_template.replace("<*>", "(.*?)"));
-            //*test */
-            println!("[(step4) get_parameter_list] final_pattern = {}", final_pattern);
-
-            // Step 5: Find matches in the content
-            let final_regex = Regex::new(&final_pattern).unwrap();
-            //*test */
-            println!("[(step4) get_parameter_list] final_regex = {}", final_regex);
-            let parameter_l = if let Some(captures) = final_regex.captures(&row_content) {
-                captures.iter()
-                    .skip(1) // Skip the entire match (index 0)
-                    .filter_map(|c| c.map(|m| m.as_str().to_string()))
-                    .collect()
-            } else {
-                vec![]
-            };
-            // let re = Regex::new(&final_pattern).unwrap();
-            // let captures = re.captures(&row_content);
-
-            // let parameter_l = match captures {
-            //     Some(caps) => caps.iter().skip(1) // Skip the entire match
-            //         .filter_map(|c| c.map(|m| m.as_str().to_string()))
-            //         .collect(),
-            //     None => vec![],
-            // };
-            //*test */
-            println!("[(step5) get_parameter_list] parameter_l = {:?}", parameter_l);
-
-            if parameter_l.len() == 0{
-                parameter_list.push(vec![]);
-            }else{
-                parameter_list.push(parameter_l);
-            }
+        // If there are no placeholders, return an empty list
+        if !template.contains("<*>") {
+            return vec![];
         }
-        parameter_list
+
+        // Step 2: Escape special characters except for <*>
+        let escape_non_alnum = Regex::new(r"[^A-Za-z0-9]").unwrap();
+        template = escape_non_alnum.replace_all(&template, |caps: &regex::Captures| {
+            format!("\\{}", &caps[0])
+        }).to_string();
+
+        //*test */
+        // println!("(step2) [get_parameter_list] escaped_template = {}", template);
+
+        // Step 3: Replace multiple spaces with \s+
+        let handle_spaces = Regex::new(r"(\\ )+").unwrap();
+        template = handle_spaces.replace_all(&template, r"\s+").to_string();
+        //*test */
+        // println!("(step3) [get_parameter_list] escaped_template = {}", template);
+
+        // Step 4: Construct the final regex pattern
+        let final_pattern = format!(
+            "^{}$",
+            template.replace(r"\<\*\>", "(.*?)")
+        );
+        //*test */
+        println!("[(step4) get_parameter_list] final_pattern = {}", final_pattern);
+
+        // Step 5: Find matches in the content
+        let final_regex = Regex::new(&final_pattern).unwrap();
+        //*test */
+        // println!("[(step4) get_parameter_list] final_regex = {}", final_regex);
+        let parameter_l = if let Some(captures) = final_regex.captures(&row_content) {
+            captures.iter()
+                .skip(1) // Skip the entire match (index 0)
+                .filter_map(|c| c.map(|m| m.as_str().to_string()))
+                .collect()
+        } else {
+            vec![]
+        };
+
+        //*test */
+        // println!("[(step5) get_parameter_list] parameter_l = {:?}", parameter_l);
+
+        if parameter_l.len() == 0{
+            parameter_list.push(vec![]);
+        }else{
+            parameter_list.push(parameter_l);
+        }
     }
+    parameter_list
+}
 #[derive(Debug, Serialize)]
 struct Event {
     event_id: String,
     event_template: String,
     occurrences: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct LogEntry {
-    event_id: Option<String>,
-    event_template: Option<String>,
-    parameter_list: Option<Vec<String>>,
 }
