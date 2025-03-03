@@ -45,7 +45,7 @@ impl LogCluster{
 #[derive(Debug)]
 enum ChildOrLogCluster {
     Children(HashMap<String, Rc<RefCell<Node>>>),
-    LogClusters(Vec<LogCluster>),
+    LogClusters(Vec<Rc<RefCell<LogCluster>>>),
 }
 
 #[derive(Debug)]
@@ -155,7 +155,7 @@ impl LogParser {
 
         let mut count = 0;
         let mut root_node = Node::new(None,None);
-        let mut log_clust:Vec<LogCluster> = Vec::new();
+        let mut log_clust:Vec<Rc<RefCell<LogCluster>>> = Vec::new();
         let df = match &self.df_log{
             Some(df) => df,
             None => panic!("df_log is None"),
@@ -192,24 +192,26 @@ impl LogParser {
                 //*test */
                 // println!("{:?}", match_cluster);
                 if let Some(mut match_cluster) = match_cluster{
-                    let new_template = self.get_template(&logmessage_list,&match_cluster.log_event);
+                    let new_template = self.get_template(&logmessage_list,&match_cluster.borrow().log_event);
                     //*test */
                     println!("\tnew_template : {:?}", new_template);
-                    match_cluster.log_id_lists.push(id.to_string());
+                    &match_cluster.borrow_mut().log_id_lists.push(id.to_string());
                     //*test */
-                    println!("\tnew_log_id_lists:{:?}", &match_cluster.log_id_lists);
+                    println!("\tnew_log_id_lists:{:?}", &match_cluster.borrow().log_id_lists);
 
                     // 检查新的模板是否与现有的不同
-                    if new_template.join(" ") != match_cluster.log_event.join(" ") {
-                        match_cluster.log_event = new_template;
+                    if new_template.join(" ") != match_cluster.borrow().log_event.join(" ") {
+                        // ? 可能有bug
+                        match_cluster.borrow_mut().log_event = new_template;
                     }
                     
                 }else{
                     let new_logcluster = LogCluster::new(vec![id.to_string()], logmessage_list);                  
                     //*test */
                     println!("\tnew_cluster : {:?}", new_logcluster);
-                    self.add_seq_to_prefix_tree(&mut root_node, &new_logcluster);
-                    log_clust.push(new_logcluster);
+                    let new_logcluster = Rc::new(RefCell::new(new_logcluster));
+                    self.add_seq_to_prefix_tree(&mut root_node, Rc::clone(&new_logcluster));
+                    log_clust.push(Rc::clone(&new_logcluster));
                 }
 
                 count += 1;
@@ -397,9 +399,9 @@ impl LogParser {
     fn add_seq_to_prefix_tree(
         &self,
         root_node: &mut Node,
-        log_clust: &LogCluster,
+        log_clust: Rc<RefCell<LogCluster>>,
     ) {
-        let seq_len = log_clust.log_event.len();
+        let seq_len = log_clust.borrow().log_event.len();
         let seq_len_str = seq_len.to_string();
         let first_layer_node = match &mut root_node.child_or_logcluster {
             ChildOrLogCluster::Children(children_map) => {
@@ -420,15 +422,16 @@ impl LogParser {
 
         let mut currrent_depth = 1;
 
-        for token in &log_clust.log_event{
+        for token in &log_clust.borrow().log_event{
             if currrent_depth >= self.depth || currrent_depth > seq_len{
                 let mut parent_node_borrow = parent_node.borrow_mut();
                 match &mut parent_node_borrow.child_or_logcluster{
                     ChildOrLogCluster::LogClusters(log_clusts) =>{
-                        log_clusts.push(log_clust.clone());
+                        let new_log_clust = Rc::clone(&log_clust);
+                        log_clusts.push(new_log_clust);
                     }
                     ChildOrLogCluster::Children(_)=>{
-                        parent_node_borrow.child_or_logcluster = ChildOrLogCluster::LogClusters(vec![log_clust.clone()]);
+                        parent_node_borrow.child_or_logcluster = ChildOrLogCluster::LogClusters(vec![Rc::clone(&log_clust)]);
                     }
                 }
 
@@ -545,19 +548,19 @@ impl LogParser {
         ret_val
     }
 
-    fn fast_match<'a>(&self, log_cluster_l:&'a Vec<LogCluster>, seq: &Vec<String>)->Option<&'a LogCluster>{
-        let mut ret_log_clust:Option<&LogCluster> = None;
+    fn fast_match<'a>(&self, log_cluster_l:&Vec<Rc<RefCell<LogCluster>>>, seq: &Vec<String>)->Option<Rc<RefCell<LogCluster>>>{
+        let mut ret_log_clust:Option<Rc<RefCell<LogCluster>>> = None;
 
         let mut max_sim = -1.0;
         let mut max_num_of_para = -1;
-        let mut max_clust:Option<&LogCluster> = None;
+        let mut max_clust:Option<Rc<RefCell<LogCluster>>> = None;
 
         for log_clust in log_cluster_l{
-           let (cur_sim, cur_num_of_para) = self.seq_dist(&log_clust.log_event, seq);
+           let (cur_sim, cur_num_of_para) = self.seq_dist(&log_clust.borrow().log_event, seq);
            if cur_sim > max_sim || (cur_sim == max_sim && cur_num_of_para > max_num_of_para){
                 max_sim = cur_sim;
                 max_num_of_para = cur_num_of_para;
-                max_clust = Some(log_clust);
+                max_clust = Some(Rc::clone(log_clust));
            } 
         }
 
@@ -568,7 +571,7 @@ impl LogParser {
         ret_log_clust
     }
 
-    fn tree_search(&self, root_node: &mut Node, seq: &Vec<String>)->Option<LogCluster>{
+    fn tree_search(&self, root_node: &mut Node, seq: &Vec<String>)->Option<Rc<RefCell<LogCluster>>>{
         let seq_len = seq.len();
         let seq_len_str = seq.len().to_string();
 
@@ -619,7 +622,7 @@ impl LogParser {
             _ => unreachable!(),
         };
 
-        let ret_log_clust = self.fast_match(log_cluster_l, seq).cloned();
+        let ret_log_clust = self.fast_match(log_cluster_l, seq);
 
         ret_log_clust
     }
@@ -653,7 +656,7 @@ impl LogParser {
         }
     }
 
-    fn output_result(&mut self, log_clust_l: &Vec<LogCluster>) -> std::result::Result<(), Box<dyn Error>>{
+    fn output_result(&mut self, log_clust_l: &Vec<Rc<RefCell<LogCluster>>>) -> std::result::Result<(), Box<dyn Error>>{
         let mut df_log = match &mut self.df_log {
             Some(df_log) => df_log,
             None => panic!("df_log is None"),
@@ -664,10 +667,10 @@ impl LogParser {
         let mut df_events = Vec::new();
         for log_clust in log_clust_l {
             //*test */
-            println!("log_logIDL: {:?}", log_clust.log_id_lists);
-            println!("log_template: {:?}", log_clust.log_event);
-            let template_str = log_clust.log_event.join(" ");
-            let occurrence = log_clust.log_id_lists.len() as u64;
+            println!("log_logIDL: {:?}", log_clust.borrow().log_id_lists);
+            println!("log_template: {:?}", log_clust.borrow().log_event);
+            let template_str = log_clust.borrow().log_event.join(" ");
+            let occurrence = log_clust.borrow().log_id_lists.len() as u64;
             let template_id = format!("{:x}", Md5::digest(template_str.as_bytes()))[..8].to_string();
 
             //*test */
@@ -675,7 +678,7 @@ impl LogParser {
             println!("template_id = {:?}", template_id);
             println!("occurrence = {:?}", template_str);
 
-            for log_id in &log_clust.log_id_lists {
+            for log_id in &log_clust.borrow().log_id_lists {
                 let log_id = match log_id.parse::<usize>() {
                     Ok(num) => num,
                     Err(e) => panic!("Failed to parse string: {}", e),
