@@ -806,49 +806,89 @@ impl LogParser {
 // ! wait to test
     fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:usize)->Vec<Vec<String>>{
         //*test */
+        println!("");
         println!("[content_col] = {:?}", content_col);
-        println!("[content_col] = {:?}", log_templates_col);
+        println!("[log_templates_col] = {:?}", log_templates_col);
         let mut parameter_list = Vec::new();
         for idx in 0..row_count{
             let row_content = content_col.get(idx).to_string();
             let row_log_template = log_templates_col.get(idx).to_string();
+            //*test */
+            println!("(before) row_content:{}", row_content);
+            println!("(before) row_log_template:{}", row_log_template);
+            let row_content = row_content.trim_matches('"'); // 去掉两端的双引号
+            let row_log_template = row_log_template.trim_matches('"'); // 去掉两端的双引号
+            println!("(after) row_content:{}", row_content);
+            println!("(after) row_log_template:{}", row_log_template);
             // Step 1: Replace placeholders with <*>
-            let template_regex = Regex::new(r"<.{1,5}>").unwrap();
-            let template_str = template_regex.replace_all(&row_log_template, "<*>");
+            let template_regex = Regex::new(r"<[^<>]{1,5}>").unwrap();
+            let mut template = template_regex.replace_all(&row_log_template, "<*>").to_string();
+            //*test */
+            println!("(step1) [get_parameter_list] template_str = {}", template);
 
             // If there are no placeholders, return an empty list
-            if !template_str.contains("<*>") {
+            if !template.contains("<*>") {
                 return vec![];
             }
 
             // Step 2: Escape special characters except for <*>
-            let mut escaped_template = String::new();
-            for c in template_str.chars() {
-                if c.is_alphanumeric() || c == '*' {
-                    escaped_template.push(c);
-                } else {
-                    escaped_template.push('\\');
-                    escaped_template.push(c);
-                }
-            }
+            let escape_non_alnum = Regex::new(r"[^A-Za-z0-9]").unwrap();
+            template = escape_non_alnum.replace_all(&template, |caps: &regex::Captures| {
+                format!("\\{}", &caps[0])
+            }).to_string();
+            // let mut escaped_template = String::new();
+            // for c in template_str.chars() {
+            //     if c.is_alphanumeric() || c == '*' {
+            //         escaped_template.push(c);
+            //     } else {
+            //         escaped_template.push('\\');
+            //         escaped_template.push(c);
+            //     }
+            // }
+
+            //*test */
+            println!("(step2) [get_parameter_list] escaped_template = {}", template);
 
             // Step 3: Replace multiple spaces with \s+
-            let space_regex = Regex::new(r"\\ +").unwrap();
-            let escaped_template = space_regex.replace_all(&escaped_template, r"\\s+");
+            let handle_spaces = Regex::new(r"(\\ )+").unwrap();
+            template = handle_spaces.replace_all(&template, r"\s+").to_string();
+            // let space_regex = Regex::new(r"\\ +").unwrap();
+            // let escaped_template = space_regex.replace_all(&escaped_template, r"\\s+");
+            //*test */
+            println!("(step3) [get_parameter_list] escaped_template = {}", template);
 
             // Step 4: Construct the final regex pattern
-            let final_pattern = format!("^{}$", escaped_template.replace("<*>", "(.*?)"));
+            let final_pattern = format!(
+                "^{}$",
+                template.replace(r"\<\*\>", "(.*?)")
+            );
+            // let final_pattern = format!("^{}$", escaped_template.replace("<*>", "(.*?)"));
+            //*test */
+            println!("[(step4) get_parameter_list] final_pattern = {}", final_pattern);
 
             // Step 5: Find matches in the content
-            let re = Regex::new(&final_pattern).unwrap();
-            let captures = re.captures(&row_content);
-
-            let parameter_l = match captures {
-                Some(caps) => caps.iter().skip(1) // Skip the entire match
+            let final_regex = Regex::new(&final_pattern).unwrap();
+            //*test */
+            println!("[(step4) get_parameter_list] final_regex = {}", final_regex);
+            let parameter_l = if let Some(captures) = final_regex.captures(&row_content) {
+                captures.iter()
+                    .skip(1) // Skip the entire match (index 0)
                     .filter_map(|c| c.map(|m| m.as_str().to_string()))
-                    .collect(),
-                None => vec![],
+                    .collect()
+            } else {
+                vec![]
             };
+            // let re = Regex::new(&final_pattern).unwrap();
+            // let captures = re.captures(&row_content);
+
+            // let parameter_l = match captures {
+            //     Some(caps) => caps.iter().skip(1) // Skip the entire match
+            //         .filter_map(|c| c.map(|m| m.as_str().to_string()))
+            //         .collect(),
+            //     None => vec![],
+            // };
+            //*test */
+            println!("[(step5) get_parameter_list] parameter_l = {:?}", parameter_l);
 
             if parameter_l.len() == 0{
                 parameter_list.push(vec![]);
