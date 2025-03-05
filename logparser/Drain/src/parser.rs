@@ -588,7 +588,7 @@ impl LogParser {
         let parent_borrow = parent_node.borrow();
         let log_cluster_l = match &parent_borrow.child_or_logcluster{
             ChildOrLogCluster::LogClusters(log_clusters) => log_clusters,
-            _ => unreachable!(),
+            _ => return None,
         };
 
         let ret_log_clust = self.fast_match(log_cluster_l, seq);
@@ -645,7 +645,7 @@ impl LogParser {
             //*test */
             println!("template_str = {:?}", template_str);
             println!("template_id = {:?}", template_id);
-            println!("occurrence = {:?}", template_str);
+            println!("occurrence = {:?}", occurrence);
 
             for log_id in &log_clust.borrow().log_id_lists {
                 let log_id = match log_id.parse::<usize>() {
@@ -775,29 +775,32 @@ impl LogParser {
 
 fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:usize)->Vec<Vec<String>>{
     //*test */
-    // println!("");
-    // println!("[content_col] = {:?}", content_col);
-    // println!("[log_templates_col] = {:?}", log_templates_col);
+    println!("");
+    println!("[content_col] = {:?}", content_col);
+    println!("[log_templates_col] = {:?}", log_templates_col);
     let mut parameter_list = Vec::new();
     for idx in 0..row_count{
         let row_content = content_col.get(idx).to_string();
         let row_log_template = log_templates_col.get(idx).to_string();
         //*test */
-        // println!("(before) row_content:{}", row_content);
-        // println!("(before) row_log_template:{}", row_log_template);
+        println!("(before) row_content:{}", row_content);
+        println!("(before) row_log_template:{}", row_log_template);
         let row_content = row_content.trim_matches('"'); // 去掉两端的双引号
         let row_log_template = row_log_template.trim_matches('"'); // 去掉两端的双引号
-        // println!("(after) row_content:{}", row_content);
-        // println!("(after) row_log_template:{}", row_log_template);
+        println!("(after) row_content:{}", row_content);
+        println!("(after) row_log_template:{}", row_log_template);
         // Step 1: Replace placeholders with <*>
         let template_regex = Regex::new(r"<[^<>]{1,5}>").unwrap();
         let mut template = template_regex.replace_all(&row_log_template, "<*>").to_string();
         //*test */
-        // println!("(step1) [get_parameter_list] template_str = {}", template);
+        println!("(step1) [get_parameter_list] template_str = {}", template);
 
         // If there are no placeholders, return an empty list
         if !template.contains("<*>") {
-            return vec![];
+            //*test */
+            println!("\"<*>\" not in template_regex");
+            parameter_list.push(vec![]);
+            continue;
         }
 
         // Step 2: Escape special characters except for <*>
