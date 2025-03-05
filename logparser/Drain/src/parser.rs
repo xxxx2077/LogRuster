@@ -82,7 +82,7 @@ impl LogParser {
         st: Option<f64>,
         max_child: Option<usize>,
         log_format : String,
-        preprocess_regex : Vec<&'static str>,
+        preprocess_regex : Vec<String>,
         keep_para: Option<bool>,
     ) -> Self {
         let default_indir = "./".to_string();
@@ -117,7 +117,10 @@ impl LogParser {
     pub fn parse(&mut self, log_name: String)-> std::result::Result<(), Box<dyn Error>>{
         self.log_name = Some(log_name);
         self.log_file_path = Some(self.get_logfile_path());
-        self.load_data()?;
+        if let Err(e) = self.load_data(){
+            eprintln!("load data fail");
+            return Err(e);
+        }
 
         let mut count = 0;
         let mut root_node = Node::new(None,None);

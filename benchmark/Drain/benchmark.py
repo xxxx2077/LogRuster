@@ -16,12 +16,30 @@
 
 
 import sys
-sys.path.append("../../")
-from logparser.Drain import LogParser
-from logparser.utils import evaluator
+sys.path.append("../")
+# from logparser.Drain import LogParser
+from utils import evaluator
 import os
 import pandas as pd
+import ctypes
+from ctypes import c_char_p, c_double, c_int, POINTER
 
+# 根据平台选择合适的库文件
+lib = ctypes.CDLL('../../logparser/Drain/target/release/libDrain.dylib')  # Linux/macOS
+# lib = ctypes.CDLL('./target/release/your_project_name.dll')  # Windows
+
+# 定义parse_log函数签名
+lib.parse.argtypes = [
+    c_char_p,  # indir
+    c_char_p,  # outdir
+    c_char_p,  # log_name
+    c_char_p,  # log_format
+    POINTER(c_char_p),  # regex_patterns
+    ctypes.c_size_t,  # regex_patterns_len
+    ctypes.c_double,  # st
+    ctypes.c_size_t,  # depth
+]
+lib.parse.restype = ctypes.c_int
 
 input_dir = "../../data/loghub_2k/"  # The input directory of log file
 output_dir = "Drain_result/"  # The output directory of parsing results
@@ -157,15 +175,31 @@ for dataset, setting in benchmark_settings.items():
     indir = os.path.join(input_dir, os.path.dirname(setting["log_file"]))
     log_file = os.path.basename(setting["log_file"])
 
-    parser = LogParser(
-        log_format=setting["log_format"],
-        indir=indir,
-        outdir=output_dir,
-        rex=setting["regex"],
-        depth=setting["depth"],
-        st=setting["st"],
+    # 将正则表达式模式转换为字节字符串
+    regex_c = [s.encode('utf-8') for s in setting["regex"]]
+    # 将regex_patterns转换为c_char_p数组
+    regex_c_array = (ctypes.c_char_p * len(regex_c))(*regex_c)
+
+    # 确保路径末尾有目录分隔符
+    if not indir.endswith(os.sep):
+        indir += os.sep
+
+    # 调用函数
+    result = lib.parse(
+        indir.encode('utf-8'),
+        output_dir.encode('utf-8'),
+        log_file.encode('utf-8'),
+        setting["log_format"].encode('utf-8'),
+        regex_c_array,
+        len(regex_c),
+        setting["st"],
+        setting["depth"],
     )
-    parser.parse(log_file)
+
+    if result == 0:
+        print("Log parsing succeeded.")
+    else:
+        print(f"Log parsing failed with error code {result}.")
 
     F1_measure, accuracy = evaluator.evaluate(
         groundtruth=os.path.join(indir, log_file + "_structured.csv"),
