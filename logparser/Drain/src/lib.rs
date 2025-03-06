@@ -5,13 +5,6 @@ use std::os::raw::c_char;
 mod parser;
 use parser::LogParser;
 
-// #[no_mangle]
-// pub extern "C" fn print_string(c_string_ptr: *const c_char) {
-//     let bytes = unsafe { CStr::from_ptr(c_string_ptr).to_bytes() };
-//     let str_slice = std::str::from_utf8(bytes).unwrap();
-//     println!("{}", str_slice);
-// }
-
 #[no_mangle]
 pub extern "C" fn parse(
     indir_ptr: *const c_char,

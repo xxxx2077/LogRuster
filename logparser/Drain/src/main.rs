@@ -30,9 +30,5 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>>{
         None,
     );
 
-    // let (headers, regex) = log_parser.generate_logformat_regex(log_format);
-    // println!("{:?}",headers);
-    // println!("{:?}",regex);
-
     log_parser.parse(log_name.to_string())
 }

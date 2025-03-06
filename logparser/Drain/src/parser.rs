@@ -138,8 +138,6 @@ impl LogParser {
         let series_lineid = df.column("LineId")?.utf8()?;
         // 遍历每一行
         for (line_id, content) in series_lineid.into_iter().zip(series_content.into_iter()) {
-            //*test */
-            println!("line_id:{:?}, content:{:?}",line_id,content);
             if let (Some(id), Some(content)) = (line_id, content) {
                 // 先将预处理结果存储在一个持久的变量中
                 let processed_content = self.preprocess(content);
@@ -148,27 +146,11 @@ impl LogParser {
                     .map(|s| s.to_string())
                     .collect();
                 
-                //*test */
-                // println!("LogID: {}, LogMessage: {:?}", id, &logmessage_list);
                 let match_cluster = self.tree_search(&mut root_node, &logmessage_list);
-                match &match_cluster {
-                    Some(mc) =>{
-                        println!("match_cluster is not None");
-                        println!("match_cluster: \n\t{:?}", mc);
-                    },
-                    None => println!("match_cluster is None"),
-                }
-                
 
-                //*test */
-                // println!("{:?}", match_cluster);
                 if let Some(mut match_cluster) = match_cluster{
                     let new_template = self.get_template(&logmessage_list,&match_cluster.borrow().log_event);
-                    //*test */
-                    println!("\tnew_template : {:?}", new_template);
                     &match_cluster.borrow_mut().log_id_lists.push(id.to_string());
-                    //*test */
-                    println!("\tnew_log_id_lists:{:?}", &match_cluster.borrow().log_id_lists);
 
                     // 检查新的模板是否与现有的不同
                     if new_template.join(" ") != match_cluster.borrow().log_event.join(" ") {
@@ -178,8 +160,6 @@ impl LogParser {
                     
                 }else{
                     let new_logcluster = LogCluster::new(vec![id.to_string()], logmessage_list);                  
-                    //*test */
-                    println!("\tnew_cluster : {:?}", new_logcluster);
                     let new_logcluster = Rc::new(RefCell::new(new_logcluster));
                     self.add_seq_to_prefix_tree(&mut root_node, Rc::clone(&new_logcluster));
                     log_clust.push(Rc::clone(&new_logcluster));
@@ -203,8 +183,6 @@ impl LogParser {
             }
         }
 
-        //*test */
-        println!("log_clust : {:?}", log_clust);
         if !Path::new(&self.out_dir).exists() {
             fs::create_dir_all(&self.out_dir).expect("Failed to create directory");
         }
@@ -249,7 +227,6 @@ impl LogParser {
     }
 
     fn generate_logformat_regex(&self, log_format: &str)->(Vec<String>,Regex){
-        println!("{:?}", log_format);
         let mut regex = String::new();
         let mut headers = Vec::new();
         let mut captures = Vec::new();
@@ -263,19 +240,11 @@ impl LogParser {
             s = format!(r"(?P<{}>.*?)", s);
             captures.push(s);
         }
-        //*test */
-        // for c in captures.iter(){
-        //     println!("{:?}",c);
-        // }
         let re_splitter = Regex::new(" +").unwrap();
         for s in re.split(log_format){
             let new_s = re_splitter.replace_all(s, r"\s+");
             spliters.push(new_s.to_string());
         }
-        //*test */
-        // for c in spliters.iter(){
-        //     println!("'{}'",c);
-        // }
         for (idx, value) in captures.iter().enumerate(){
             regex += &spliters[idx];
             regex += value;
@@ -294,8 +263,6 @@ impl LogParser {
         let mut log_entries: Vec<HashMap<String, String>> = Vec::new();
         let mut linecount = 0;
 
-        //*test */
-        println!("[log_to_dataframe] regex = {:?}", regex);
         for line in reader.lines() {
             let line = line?;
             if let Some(caps) = regex.captures(&line.trim()) {
@@ -308,7 +275,7 @@ impl LogParser {
                 log_entries.push(entry);
                 linecount += 1;
             } else {
-                eprintln!("[Warning] Skip line: {}", line);
+                eprintln!("(log_to_dataframe)[Warning] Skip line: {}", line);
             }
         }
 
@@ -323,7 +290,6 @@ impl LogParser {
         }
 
         for (key, values) in series_map {
-            println!("key:{:?}",key);
             columns.push(Series::new(key.trim_matches('<').trim_matches('>'), values));
         }
 
@@ -332,7 +298,6 @@ impl LogParser {
         // 存储 DataFrame 到 df_log 字段
         self.df_log = Some(df);
 
-        println!("{:?}", &self.df_log);
         println!("Total lines: {}", log_entries.len());
 
         Ok(())
@@ -341,7 +306,6 @@ impl LogParser {
     // 加载数据（私有方法）
     fn load_data(&mut self) -> std::result::Result<(), Box<dyn Error>> {
         let (headers, log_format_regex) = self.generate_logformat_regex(&self.log_format);
-        println!("headers:{:?}, log_format_regex:{:?}", headers, log_format_regex);
         self.log_to_dataframe(&log_format_regex, &headers)
     }
     
@@ -633,17 +597,9 @@ impl LogParser {
         let mut log_templateids = vec![None;row_count];
         let mut df_events = Vec::new();
         for log_clust in log_clust_l {
-            //*test */
-            println!("log_logIDL: {:?}", log_clust.borrow().log_id_lists);
-            println!("log_template: {:?}", log_clust.borrow().log_event);
             let template_str = log_clust.borrow().log_event.join(" ");
             let occurrence = log_clust.borrow().log_id_lists.len() as u64;
             let template_id = format!("{:x}", Md5::digest(template_str.as_bytes()))[..8].to_string();
-
-            //*test */
-            println!("template_str = {:?}", template_str);
-            println!("template_id = {:?}", template_id);
-            println!("occurrence = {:?}", occurrence);
 
             for log_id in &log_clust.borrow().log_id_lists {
                 let log_id = match log_id.parse::<usize>() {
@@ -678,35 +634,19 @@ impl LogParser {
         let log_templateids_series = Series::new("EventId",log_templateids);
         let log_templates_series = Series::new("EventTemplate",log_templates.clone());
 
-        //*test */
-        println!("df_log add new col");
         df_log = df_log.with_column(log_templateids_series)?;
         df_log = df_log.with_column(log_templates_series.clone())?;
 
-        //*test */
-        println!("update df_log, df_log is {:?}",df_log);
         if self.keep_para {
             let df_content_series = df_log.column("Content")?;
-            //*test */
-            println!("get col[content]");
             let log_templates_series = &log_templates_series;
-            // ! bug here
             let res = get_parameter_list(df_content_series,log_templates_series, row_count);
-            //*test */
-            println!("res : {:?}", res);
             let flattened: Vec<String> = res.into_iter()
                 .map(|sublist| sublist.join(", "))
                 .collect();
 
-            //*test */
-            println!("flattened : {:?}", flattened);
             let parameter_series = Series::new("ParameterList", &flattened);
-            //*test */
-            println!("add col[para]");
-            println!("para_seris : {:?}", &parameter_series);
             let df = df_log.with_column(parameter_series)?;
-            //*test */
-            println!("add col[para] successfully");
             df_log = df;
         };
 
@@ -715,12 +655,8 @@ impl LogParser {
             None=> panic!("no log_name"),
         } ;
 
-        //*test */
-        println!("log_name : {:?}", log_name);
         // Write structured logs to CSV
         let structured_path = Path::new(&self.out_dir).join(format!("{}_structured.csv", log_name));
-        //*test */
-        println!("structured_path is {:?}", structured_path);
         // 打开或创建一个文件用于写入 CSV 数据
         let file = File::create(structured_path)?;
 
@@ -755,8 +691,6 @@ impl LogParser {
         }
 
         let templates_path = Path::new(&self.out_dir).join(format!("{}_templates.csv", log_name));
-        //*test */
-        println!("templates_path is {:?}", templates_path);
         let mut wtr = Writer::from_path(templates_path).expect("Failed to create writer");
         wtr.write_record(["EventId", "EventTemplate", "Occurrences"])
             .expect("Failed to write header");
@@ -772,31 +706,18 @@ impl LogParser {
 }
 
 fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:usize)->Vec<Vec<String>>{
-    //*test */
-    println!("");
-    println!("[content_col] = {:?}", content_col);
-    println!("[log_templates_col] = {:?}", log_templates_col);
     let mut parameter_list = Vec::new();
     for idx in 0..row_count{
         let row_content = content_col.get(idx).to_string();
         let row_log_template = log_templates_col.get(idx).to_string();
-        //*test */
-        println!("(before) row_content:{}", row_content);
-        println!("(before) row_log_template:{}", row_log_template);
         let row_content = row_content.trim_matches('"'); // 去掉两端的双引号
         let row_log_template = row_log_template.trim_matches('"'); // 去掉两端的双引号
-        println!("(after) row_content:{}", row_content);
-        println!("(after) row_log_template:{}", row_log_template);
         // Step 1: Replace placeholders with <*>
         let template_regex = Regex::new(r"<[^<>]{1,5}>").unwrap();
         let mut template = template_regex.replace_all(&row_log_template, "<*>").to_string();
-        //*test */
-        println!("(step1) [get_parameter_list] template_str = {}", template);
 
         // If there are no placeholders, return an empty list
         if !template.contains("<*>") {
-            //*test */
-            println!("\"<*>\" not in template_regex");
             parameter_list.push(vec![]);
             continue;
         }
@@ -807,27 +728,18 @@ fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:
             format!("\\{}", &caps[0])
         }).to_string();
 
-        //*test */
-        println!("(step2) [get_parameter_list] escaped_template = {}", template);
-
         // Step 3: Replace multiple spaces with \s+
         let handle_spaces = Regex::new(r"(\\ )+").unwrap();
         template = handle_spaces.replace_all(&template, r"\s+").to_string();
-        //*test */
-        println!("(step3) [get_parameter_list] escaped_template = {}", template);
 
         // Step 4: Construct the final regex pattern
         let final_pattern = format!(
             "^{}$",
             template.replace(r"\<\*\>", "(.*?)")
         );
-        //*test */
-        println!("[(step4) get_parameter_list] final_pattern = {}", final_pattern);
 
         // Step 5: Find matches in the content
         let final_regex = Regex::new(&final_pattern).unwrap();
-        //*test */
-        println!("[(step4) get_parameter_list] final_regex = {}", final_regex);
         let parameter_l = if let Some(captures) = final_regex.captures(&row_content) {
             captures.iter()
                 .skip(1) // Skip the entire match (index 0)
@@ -836,9 +748,6 @@ fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:
         } else {
             vec![]
         };
-
-        //*test */
-        println!("[(step5) get_parameter_list] parameter_l = {:?}", parameter_l);
 
         if parameter_l.len() == 0{
             parameter_list.push(vec![]);
