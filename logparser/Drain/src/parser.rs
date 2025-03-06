@@ -1,4 +1,6 @@
 use fancy_regex::Regex as FancyRegex;
+use polars::export::arrow::compute::aggregate::max;
+use polars::export::rayon::iter::split;
 use regex::Regex;
 use serde::Serialize;
 use std::cell::RefCell;
@@ -246,49 +248,40 @@ impl LogParser {
         logfile_path
     }
 
-    // 提取变量名（私有方法）
-    fn extract_variable_names(&self, log_format: &str) -> Vec<String> {
+    fn generate_logformat_regex(&self, log_format: &str)->(Vec<String>,Regex){
+        println!("{:?}", log_format);
+        let mut regex = String::new();
         let mut headers = Vec::new();
+        let mut captures = Vec::new();
+        let mut spliters = Vec::new();
         let re = Regex::new(r"(<[^<>]+>)").unwrap();
-
-        for cap in re.captures_iter(log_format) {
-            if let Some(header) = cap.get(1) {
-                headers.push(header.as_str().to_string());
-            } 
+        for cap in re.captures_iter(log_format){
+            let c = cap.get(0).unwrap();
+            let mut s = c.as_str().to_string();
+            s = s.trim_start_matches('<').trim_end_matches('>').to_string();
+            headers.push(s.clone());
+            s = format!(r"(?P<{}>.*?)", s);
+            captures.push(s);
         }
-
-        print!("{:?}", headers);
-        headers
-    }
-
-    // 生成日志格式的正则表达式（私有方法）
-    fn generate_logformat_regex(&self, log_format: &str) -> (Vec<String>, Regex) {
-        let mut regex_pattern = String::new();
-        let headers = self.extract_variable_names(log_format);
-        let mut parts = Vec::new();
-        let re = Regex::new(r"(<[^<>]+>|\s+|[^\s<>]+)").unwrap();
-
-        for cap in re.captures_iter(log_format) {
-            if let Some(header) = cap.get(1) {
-                parts.push(header.as_str().to_string());
-            } else if let Some(_) = cap.get(0) {
-                parts.push(" ".to_string());
-            }
+        //*test */
+        // for c in captures.iter(){
+        //     println!("{:?}",c);
+        // }
+        let re_splitter = Regex::new(" +").unwrap();
+        for s in re.split(log_format){
+            let new_s = re_splitter.replace_all(s, r"\s+");
+            spliters.push(new_s.to_string());
         }
-
-        for part in &parts { 
-            if headers.contains(part) {
-                regex_pattern.push_str(&format!(r"(?P<{}>.*?)", part.trim_matches('<').trim_matches('>')));
-            } else {
-                let splitter = part.replace(" +", r"\\s+");
-                regex_pattern.push_str(&splitter);
-            }
+        //*test */
+        // for c in spliters.iter(){
+        //     println!("'{}'",c);
+        // }
+        for (idx, value) in captures.iter().enumerate(){
+            regex += &spliters[idx];
+            regex += value;
         }
-
-        let final_pattern = format!(r"^{}$", regex_pattern);
-        let regex = Regex::new(&final_pattern).unwrap();
-
-        (headers, regex)
+        let regex = Regex::new(&format!("^{}$",&regex)).unwrap();
+        (headers,regex)
     }
 
     fn log_to_dataframe(&mut self, regex: &Regex, headers: &[String]) -> std::result::Result<(), Box<dyn Error>> {     
@@ -301,6 +294,8 @@ impl LogParser {
         let mut log_entries: Vec<HashMap<String, String>> = Vec::new();
         let mut linecount = 0;
 
+        //*test */
+        println!("[log_to_dataframe] regex = {:?}", regex);
         for line in reader.lines() {
             let line = line?;
             if let Some(caps) = regex.captures(&line.trim()) {
@@ -346,7 +341,7 @@ impl LogParser {
     // 加载数据（私有方法）
     fn load_data(&mut self) -> std::result::Result<(), Box<dyn Error>> {
         let (headers, log_format_regex) = self.generate_logformat_regex(&self.log_format);
-
+        println!("headers:{:?}, log_format_regex:{:?}", headers, log_format_regex);
         self.log_to_dataframe(&log_format_regex, &headers)
     }
     
@@ -579,7 +574,10 @@ impl LogParser {
                         return None;
                     }
                 }
-                _ => unreachable!()
+                _ => {
+                    self.print_tree(root_node,1);
+                    unreachable!()
+                }
             } 
 
             current_depth += 1;
@@ -810,13 +808,13 @@ fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:
         }).to_string();
 
         //*test */
-        // println!("(step2) [get_parameter_list] escaped_template = {}", template);
+        println!("(step2) [get_parameter_list] escaped_template = {}", template);
 
         // Step 3: Replace multiple spaces with \s+
         let handle_spaces = Regex::new(r"(\\ )+").unwrap();
         template = handle_spaces.replace_all(&template, r"\s+").to_string();
         //*test */
-        // println!("(step3) [get_parameter_list] escaped_template = {}", template);
+        println!("(step3) [get_parameter_list] escaped_template = {}", template);
 
         // Step 4: Construct the final regex pattern
         let final_pattern = format!(
@@ -829,7 +827,7 @@ fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:
         // Step 5: Find matches in the content
         let final_regex = Regex::new(&final_pattern).unwrap();
         //*test */
-        // println!("[(step4) get_parameter_list] final_regex = {}", final_regex);
+        println!("[(step4) get_parameter_list] final_regex = {}", final_regex);
         let parameter_l = if let Some(captures) = final_regex.captures(&row_content) {
             captures.iter()
                 .skip(1) // Skip the entire match (index 0)
@@ -840,7 +838,7 @@ fn get_parameter_list(content_col:&Series, log_templates_col:&Series, row_count:
         };
 
         //*test */
-        // println!("[(step5) get_parameter_list] parameter_l = {:?}", parameter_l);
+        println!("[(step5) get_parameter_list] parameter_l = {:?}", parameter_l);
 
         if parameter_l.len() == 0{
             parameter_list.push(vec![]);

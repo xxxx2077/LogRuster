@@ -1,20 +1,18 @@
 mod parser;
 use parser::LogParser;
 
-fn main() {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>>{
     // 日志文件路径
-    let indir = "../../data/loghub_2k/HDFS/";
+    let indir = "../../data/loghub_2k/Zookeeper/";
 
     let outdir = "demo_result/";
 
-    let log_name = "HDFS_2k.log";
+    let log_name = "Zookeeper_2k.log";
     
-    let log_format = "<Date> <Time> <Pid> <Level> <Component>: <Content>";
+    let log_format = r"<Date> <Time> - <Level>  \[<Node>:<Component>@<Id>\] - <Content>";
 
     let regex_patterns = vec![
-        r"blk_(|-)[0-9]+", // block id
-        r"(/|)([0-9]+\.){3}[0-9]+(:[0-9]+|)(:|)", // IP Address
-        r"(?<=[^A-Za-z0-9])(\-?\+?\d+)(?=[^A-Za-z0-9])|[0-9]+$", // Numbers
+        r"(/|)(\d+\.){3}\d+(:\d+)?".to_string(),
     ];
 
     let st = 0.5;
@@ -32,9 +30,9 @@ fn main() {
         None,
     );
 
-    if let Err(e) = log_parser.parse(log_name.to_string()) {
-        eprintln!("Error occurred: {}", e);
-    } else {
-        println!("Function executed successfully.");
-    }
+    // let (headers, regex) = log_parser.generate_logformat_regex(log_format);
+    // println!("{:?}",headers);
+    // println!("{:?}",regex);
+
+    log_parser.parse(log_name.to_string())
 }
