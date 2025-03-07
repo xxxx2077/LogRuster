@@ -178,7 +178,7 @@ for dataset, setting in benchmark_settings.items():
     indir = os.path.join(input_dir, os.path.dirname(setting["log_file"]))
     log_file = os.path.basename(setting["log_file"])
 
-        # 将正则表达式模式转换为字节字符串
+    # 将正则表达式模式转换为字节字符串
     regex_c = [s.encode('utf-8') for s in setting["regex"]]
     # 将regex_patterns转换为c_char_p数组
     regex_c_array = (ctypes.c_char_p * len(regex_c))(*regex_c)

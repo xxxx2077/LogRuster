@@ -12,7 +12,6 @@ Logram_result/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
-Drain_be
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

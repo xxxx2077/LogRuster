@@ -8,10 +8,7 @@ use md5::{Md5, Digest};
 fn triple_match(tokens: &[String], tri_dictionary_list: &HashMap<String, i32>, tri_threshold: i32) -> Vec<usize> {
     let mut index_list = HashMap::new();
 
-    for index in 0..tokens.len() {
-        if index >= tokens.len() - 2 {
-            break;
-        }
+    for index in 0..tokens.len().saturating_sub(2) {
         let triple_tmp = format!("{}^{}^{}", tokens[index], tokens[index + 1], tokens[index + 2]);
 
         if !tri_dictionary_list.contains_key(&triple_tmp) || tri_dictionary_list[&triple_tmp] < tri_threshold {
@@ -111,12 +108,14 @@ pub fn token_match(
 
     // 写入模板文件
     let mut template_writer = WriterBuilder::new().from_path(template_file).expect("Failed to create template file writer");
+    template_writer.write_record(&["EventId", "EventTemplate"]).expect("Failed to write header to template file");
     for (event_id, event_template) in template_lines.iter() {
         template_writer.serialize((event_id, event_template)).expect("Failed to write to template file");
     }
 
     // 写入结构化日志文件
     let mut structured_log_writer = WriterBuilder::new().from_path(structured_log_file).expect("Failed to create structured log file writer");
+    structured_log_writer.write_record(&["LineId", "Content", "EventId", "EventTemplate"]).expect("Failed to write header to structured log file");
     for (line_id, content, event_id, event_template) in structured_log_lines.iter() {
         structured_log_writer.serialize((line_id, content, event_id, event_template)).expect("Failed to write to structured log file");
     }

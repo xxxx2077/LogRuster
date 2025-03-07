@@ -65,10 +65,7 @@ pub fn dictionary_builder(log_format:String, log_file_path:PathBuf, preprocess_r
 
         all_token_list.push(tokens.clone());
 
-        for index in 0..tokens.len() {
-            if index >= tokens.len() - 2 {
-                break;
-            }
+        for index in 0..tokens.len().saturating_sub(2) {
             let triple_tmp = format!("{}^{}^{}", tokens[index], tokens[index + 1], tokens[index + 2]);
             *tri_dictionary_list.entry(triple_tmp).or_insert(0) += 1;
         }
