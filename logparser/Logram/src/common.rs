@@ -16,7 +16,7 @@ pub fn token_spilter(log_line:&str, regex: &Regex, preprocess_regex: &Vec<FancyR
     let log_line_trimmed = log_line.trim();
     let captures = regex.captures(log_line_trimmed);
     // *test
-    println!("match : {:?}", captures);
+    // println!("match : {:?}", captures);
     match captures {
         None => {
             // 如果没有找到匹配项
@@ -26,11 +26,11 @@ pub fn token_spilter(log_line:&str, regex: &Regex, preprocess_regex: &Vec<FancyR
             // 提取名为 "Content" 的捕获组
             if let Some(message) = caps.name("Content").map(|m| m.as_str()) {
                 //*test */
-                println!("message = {:?}", message);
+                // println!("message = {:?}", message);
                 // 预处理消息
                 let processed_message = preprocess(message, preprocess_regex);
                 //*test */
-                println!("process_message = {:?}", processed_message);
+                // println!("process_message = {:?}", processed_message);
                 
                 // 按空格分割消息为标记
                 let tokens: Vec<String> = processed_message

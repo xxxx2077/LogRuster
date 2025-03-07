@@ -45,6 +45,18 @@ impl LogParser{
         let log_file_path = self.in_dir.join(log_file_basename);
         println!("Parsing file: {}", log_file_path.display());
 
-        dictionary_builder(self.log_format.clone(), log_file_path, self.preprocess_regex.clone())
+        let (
+            doubleDictionaryList,
+            triDictionaryList,
+            allTokenList,
+            allMessageList,
+        ) = dictionary_builder(self.log_format.clone(), log_file_path, self.preprocess_regex.clone());
+
+        // *test
+        println!("doubleDictionaryList = \n\t{:?}",doubleDictionaryList);
+        println!("triDictionaryList = \n\t{:?}", triDictionaryList);
+        println!("allTokenList = \n\t{:?}", allTokenList);
+        println!("allMessageList = \n\t{:?}", allMessageList);
+        Ok(())
     }
 }
