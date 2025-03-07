@@ -37,7 +37,35 @@ python demo/Logram/demo.py
 ```bash
 python benchmark/Logram/benchmark.py
 ```
+## Dictionary
 
+```
+.
+├── benchmark               // benchmark代码
+│   ├── Drain
+│   ├── Logram
+│   └── utils               // 评估代码
+├── data                    // 数据集
+├── demo
+│   ├── Drain
+│   │   ├── demo_result
+│   └── Logram
+│       ├── demo_result
+├── logparser
+│   ├── Drain
+│   │   ├── demo_result     // 运行结果
+│   │   ├── src             // 源代码
+│   │   └── target
+│   │       ├── debug
+│   │       └── release     // 编译后的包
+│   └── Logram
+│       ├── demo_result     // 运行结果
+│       ├── src             // 源代码
+│       └── target
+│           ├── debug
+│           └── release     // 编译后的包
+└── reference_paper
+```
 
 ## Application
 
