@@ -1,6 +1,7 @@
 mod common;
 mod logram;
 mod dictionary;
+mod match_token;
 use logram::LogParser;
 
 use std::error::Error;
