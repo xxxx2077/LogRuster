@@ -1,4 +1,4 @@
-# logparser_rust
+# LogRuster
 
 毕业设计：rust高性能日志框架（Drain & Logram）
 
